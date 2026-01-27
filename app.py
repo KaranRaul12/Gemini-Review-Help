@@ -20,6 +20,7 @@ st.markdown("""
     .stApp { background-color: #0e1117; color: white; }
     [data-testid="stMetricValue"] { color: #FF9900 !important; }
     .chat-container { background-color: #1f2937; padding: 20px; border-radius: 15px; border: 1px solid #374151; }
+    .stButton>button { border-radius: 20px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -41,62 +42,72 @@ def get_ai_response(user_query, reviews_context):
     model = genai.GenerativeModel('gemini-1.5-flash')
     
     prompt = f"""
-    You are a product analyst. Based on these Amazon reviews, answer the user's question.
-    REVIEWS: {str(reviews_context)[:10000]} 
+    You are a professional product analyst. Based on these Amazon reviews, answer the user's question clearly.
+    REVIEWS: {str(reviews_context)[:12000]} 
     QUESTION: {user_query}
     """
     response = model.generate_content(prompt)
     return response.text
 
-# --- DASHBOARD UI ---
-st.title("📊 Amazon Insight + AI Chat")
+# --- INITIALIZE SESSION STATE ---
+if 'reviews_list' not in st.session_state:
+    st.session_state.reviews_list = []
+if 'chat_answer' not in st.session_state:
+    st.session_state.chat_answer = ""
 
-if 'reviews_list' not in st.session_store:
-    st.session_store.reviews_list = []
-
+# --- SIDEBAR ---
 with st.sidebar:
-    st.header("🛒 Setup")
+    st.header("🛒 Data Source")
     target_url = st.text_input("Amazon Review URL:")
     if st.button("🚀 Analyze Product", use_container_width=True):
         with st.spinner("Scraping and analyzing..."):
             reviews, error = scrape_amazon(target_url)
             if reviews:
-                st.session_store.reviews_list = reviews
+                st.session_state.reviews_list = reviews
                 st.success(f"Found {len(reviews)} reviews!")
             else:
                 st.error(error)
 
-# --- ANALYSIS SECTION ---
-if st.session_store.reviews_list:
-    reviews = st.session_store.reviews_list
+# --- MAIN DASHBOARD ---
+st.title("📊 Amazon Insight + AI Chat")
+
+if st.session_state.reviews_list:
+    reviews = st.session_state.reviews_list
     sia = SentimentIntensityAnalyzer()
     df = pd.DataFrame([{"Review": r, "Score": sia.polarity_scores(r)['compound']} for r in reviews])
     df['Sentiment'] = df['Score'].apply(lambda x: 'Positive' if x > 0.05 else ('Negative' if x < -0.05 else 'Neutral'))
 
-    col1, col2 = st.columns([1, 1])
+    col1, col2 = st.columns([1, 1.2])
     
     with col1:
-        st.subheader("Sentiment Distribution")
+        st.subheader("Sentiment Share")
         fig = px.pie(df, names='Sentiment', color='Sentiment',
                      color_discrete_map={'Positive':'#FF9900', 'Negative':'#FF0000', 'Neutral':'#808080'},
                      hole=0.4)
-        fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color="white", showlegend=False)
+        fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color="white", showlegend=True)
         st.plotly_chart(fig, use_container_width=True)
 
     # --- CHATBOT SECTION ---
     with col2:
-        st.subheader("💬 Ask the AI about these reviews")
-        st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-        user_input = st.text_input("e.g., 'What are the top 3 pros and cons?'")
+        st.subheader("💬 AI Product Consultant")
+        
+        # Quick Action Buttons
+        q_col1, q_col2, q_col3 = st.columns(3)
+        if q_col1.button("Summarize Pros"): st.session_state.query = "What are the main things people love about this?"
+        if q_col2.button("Top Complaints"): st.session_state.query = "What are the most common negative points?"
+        if q_col3.button("Value for Money?"): st.session_state.query = "Based on reviews, is this product worth the price?"
+
+        user_input = st.text_input("Ask a specific question:", key="query")
         
         if user_input:
-            with st.spinner("AI is thinking..."):
-                answer = get_ai_response(user_input, reviews)
-                st.markdown(f"**AI:** {answer}")
-        st.markdown('</div>', unsafe_allow_html=True)
+            with st.spinner("AI is reading reviews..."):
+                st.session_state.chat_answer = get_ai_response(user_input, reviews)
+        
+        if st.session_state.chat_answer:
+            st.markdown(f'<div class="chat-container"><b>AI Analyst:</b><br>{st.session_state.chat_answer}</div>', unsafe_allow_html=True)
 
     st.divider()
-    st.subheader("Detailed Breakdown")
+    st.subheader("Detailed Review Breakdown")
     
     def style_sent(val):
         color = '#006400' if val == 'Positive' else '#8b0000' if val == 'Negative' else '#444444'
@@ -105,4 +116,4 @@ if st.session_store.reviews_list:
     st.dataframe(df.style.map(style_sent, subset=['Sentiment']), use_container_width=True)
 
 else:
-    st.info("👈 Enter an Amazon Review URL in the sidebar to start.")
+    st.info("👈 Enter an Amazon 'See All Reviews' URL in the sidebar to start.")
