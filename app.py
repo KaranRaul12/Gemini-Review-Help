@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
-from collections import Counter
+import plotly.express as px
 import nltk
 import re
 
@@ -13,14 +13,24 @@ try:
 except LookupError:
     nltk.download('vader_lexicon')
 
-# --- Custom Styling ---
+# --- UI & DARK MODE STYLING ---
 st.set_page_config(page_title="Amazon Insight Pro", layout="wide")
+
+# Custom CSS to fix "white panes" and contrast
 st.markdown("""
     <style>
-    .main { background-color: #f5f7f9; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    .sentiment-pos { color: #28a745; font-weight: bold; }
-    .sentiment-neg { color: #dc3545; font-weight: bold; }
+    /* Main background */
+    .stApp { background-color: #0e1117; color: white; }
+    
+    /* KPI Card Styling */
+    [data-testid="stMetricValue"] { color: #FF9900 !important; font-size: 2rem; }
+    [data-testid="stMetricLabel"] { color: #ffffff !important; }
+    div[data-testid="metric-container"] {
+        background-color: #1f2937;
+        border: 1px solid #374151;
+        padding: 15px;
+        border-radius: 10px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -31,7 +41,7 @@ def scrape_amazon_reviews(url):
         st.error("🔑 API Key missing in Secrets!")
         st.stop()
 
-    payload = {'api_key': api_key, 'url': url, 'country_code': 'us'}
+    payload = {'api_key': api_key, 'url': url}
     try:
         response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
         soup = BeautifulSoup(response.text, "html.parser")
@@ -40,39 +50,25 @@ def scrape_amazon_reviews(url):
     except Exception as e:
         return None, str(e)
 
-def get_keywords(text_list):
-    # Simple cleaner to find common nouns/adjectives
-    all_text = " ".join(text_list).lower()
-    words = re.findall(r'\w+', all_text)
-    # Filter out common stop words
-    stop_words = {'the', 'and', 'i', 'it', 'to', 'is', 'was', 'of', 'for', 'in', 'with', 'this', 'but', 'on', 'my'}
-    words = [w for w in words if w not in stop_words and len(w) > 3]
-    return Counter(words).most_common(10)
-
 # --- SIDEBAR ---
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg", width=100)
-    st.title("Settings")
-    st.info("Ensure you use the 'See All Reviews' page URL for the best results.")
+    st.title("⚙️ Settings")
     target_url = st.text_input("Amazon Review URL:")
-    analyze_btn = st.button("🚀 Run Full Analysis", use_container_width=True)
+    analyze_btn = st.button("🚀 Run Analysis", use_container_width=True)
 
 # --- MAIN DASHBOARD ---
 st.title("📦 Product Sentiment Intelligence")
 
 if analyze_btn and target_url:
-    if not target_url.startswith("http"):
-        target_url = "https://" + target_url
-
-    with st.spinner("Analyzing customer feedback..."):
+    with st.spinner("Fetching Data..."):
         reviews, error = scrape_amazon_reviews(target_url)
         
         if error:
             st.error(f"Error: {error}")
         elif not reviews:
-            st.warning("No reviews found. Amazon might be showing a CAPTCHA or the URL structure is different.")
+            st.warning("No reviews found. Try the 'See All Reviews' page URL.")
         else:
-            # Data Processing
+            # 1. Processing Logic
             sia = SentimentIntensityAnalyzer()
             data = []
             for r in reviews:
@@ -82,39 +78,52 @@ if analyze_btn and target_url:
             
             df = pd.DataFrame(data)
             
-            # --- TOP ROW: KPI METRICS ---
+            # --- ROW 1: KPI METRICS ---
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Total Reviews", len(df))
-            m2.metric("Positive %", f"{(len(df[df['Sentiment']=='Positive'])/len(df)*100):.1f}%")
-            m3.metric("Negative %", f"{(len(df[df['Sentiment']=='Negative'])/len(df)*100):.1f}%")
+            m2.metric("Positive Reviews", len(df[df['Sentiment']=='Positive']))
+            m3.metric("Negative Reviews", len(df[df['Sentiment']=='Negative']))
             m4.metric("Avg Score", f"{df['Score'].mean():.2f}")
 
             st.divider()
 
-            # --- MIDDLE ROW: CHARTS ---
+            # --- ROW 2: PIE CHART & KEYWORDS ---
             c1, c2 = st.columns([1, 1])
+            
             with c1:
-                st.subheader("Sentiment Distribution")
-                st.bar_chart(df['Sentiment'].value_counts(), color="#FF9900")
+                st.subheader("Sentiment Share")
+                # Custom Pie Chart: Orange for Positive, Red for Negative
+                fig = px.pie(df, names='Sentiment', 
+                             color='Sentiment',
+                             color_discrete_map={'Positive':'#FF9900', 'Negative':'#FF0000', 'Neutral':'#808080'},
+                             hole=0.4)
+                fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color="white")
+                st.plotly_chart(fig, use_container_width=True)
             
             with c2:
-                st.subheader("Trending Keywords")
-                keywords = get_keywords(reviews)
-                key_df = pd.DataFrame(keywords, columns=['Word', 'Count'])
-                st.dataframe(key_df, use_container_width=True, hide_index=True)
+                st.subheader("Top Feedback Keywords")
+                words = re.findall(r'\w+', " ".join(reviews).lower())
+                stop_words = {'the', 'and', 'was', 'for', 'this', 'with', 'that', 'they'}
+                filtered_words = [w for w in words if w not in stop_words and len(w) > 3]
+                key_df = pd.DataFrame(pd.Series(filtered_words).value_counts().head(8)).reset_index()
+                key_df.columns = ['Keyword', 'Frequency']
+                st.table(key_df)
 
-            # --- BOTTOM ROW: DETAILED TABLE ---
-            st.subheader("Customer Voices")
+            # --- ROW 3: STYLED DATA TABLE ---
+            st.subheader("Detailed Review Breakdown")
             
-            # Highlight sentiments in the table
-            def highlight_sentiment(val):
-                color = '#d4edda' if val == 'Positive' else '#f8d7da' if val == 'Negative' else '#e2e3e5'
-                return f'background-color: {color}'
+            # This function fixes the "white washed" look with bold colors
+            def style_sentiment(val):
+                if val == 'Positive':
+                    return 'background-color: #006400; color: white; font-weight: bold;' # Dark Green
+                elif val == 'Negative':
+                    return 'background-color: #8b0000; color: white; font-weight: bold;' # Dark Red
+                return 'background-color: #444444; color: white;' # Grey
 
-            st.dataframe(df.style.applymap(highlight_sentiment, subset=['Sentiment']), use_container_width=True)
+            # Applying the style to the Sentiment column
+            styled_df = df.style.map(style_sentiment, subset=['Sentiment'])
+            st.dataframe(styled_df, use_container_width=True)
 
-            # Export
-            st.download_button("Export Results", df.to_csv().encode('utf-8'), "analysis.csv", "text/csv")
+            st.download_button("📥 Download Report", df.to_csv().encode('utf-8'), "amazon_report.csv")
 else:
-    st.image("https://img.freepik.com/free-vector/sentiment-analysis-concept-illustration_114360-5182.jpg", width=400)
-    st.write("Enter a URL in the sidebar and click 'Run Analysis' to begin.")
+    st.info("👈 Paste an Amazon 'See All Reviews' URL in the sidebar to begin.")
