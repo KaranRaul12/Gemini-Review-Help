@@ -5,73 +5,113 @@ from bs4 import BeautifulSoup
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 import nltk
 
-# NLTK setup
+# 1. Initialize NLTK Sentiment Engine
 try:
     nltk.data.find('sentiment/vader_lexicon.zip')
 except LookupError:
     nltk.download('vader_lexicon')
 
-def scrape_reviews_robust(amazon_url, api_key):
-    # We use ScraperAPI to bypass Amazon's blocks
-    payload = {'api_key': 794cbc9f707ab541b2ab889156d16e8d, 'url': amazon_url}
+def scrape_amazon_reviews(url):
+    """Fetches reviews using ScraperAPI and Streamlit Secrets."""
+    # Retrieve the key you saved in the 'Secrets' tab
+    try:
+        api_key = st.secrets["SCRAPER_API_KEY"]
+    except KeyError:
+        st.error("🔑 API Key not found! Go to Settings > Secrets and add SCRAPER_API_KEY = 'your_key_here'")
+        st.stop()
+
+    payload = {'api_key': api_key, 'url': url}
     
     try:
-        # This sends the request through a proxy that handles CAPTCHAs
+        # Proxy request to bypass Amazon blocks
         response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
         
         if response.status_code != 200:
-            return None, f"Error: Received status code {response.status_code}"
+            return None, f"ScraperAPI Error: {response.status_code}"
             
         soup = BeautifulSoup(response.text, "html.parser")
         
-        # Updated selectors for 2026 Amazon layout
+        # Scrapes the review text blocks
         review_elements = soup.select('span[data-hook="review-body"]')
         
+        if not review_elements:
+            return None, "No reviews found. Make sure you use a 'See All Reviews' URL."
+            
         reviews = [item.get_text().strip() for item in review_elements]
         return reviews, None
     except Exception as e:
         return None, str(e)
 
-# --- UI ---
-st.set_page_config(page_title="Amazon AI Dashboard", layout="wide")
-st.title("🚀 Amazon Insight Dashboard")
+# --- DASHBOARD UI ---
+st.set_page_config(page_title="Amazon Review Analyst", layout="wide")
 
-# Sidebar for API Key
-with st.sidebar:
-    st.header("Settings")
-    api_key = st.text_input("Enter ScraperAPI Key:", type="password", help="Get a free key at scraperapi.com")
-    st.info("Amazon blocks standard requests. A proxy API is required for cloud deployment.")
+st.title("📊 Amazon Review Dashboard")
+st.markdown("Analyze customer sentiment instantly using AI.")
 
-target_url = st.text_input("Amazon Review Page URL:")
+# Input Section
+target_url = st.text_input("Enter Amazon Review URL:", 
+                           placeholder="https://www.amazon.com/product-reviews/B0XXX...")
 
-if st.button("Run Analysis"):
-    if not api_key:
-        st.error("Please enter a ScraperAPI key in the sidebar.")
-    elif not target_url:
-        st.warning("Please enter a URL.")
+if st.button("Analyze Product"):
+    if not target_url:
+        st.warning("Please paste a URL first.")
     else:
-        with st.spinner("Bypassing Amazon security..."):
-            reviews, error = scrape_reviews_robust(target_url, api_key)
+        # Clean URL: ensure https
+        if not target_url.startswith("http"):
+            target_url = "https://" + target_url
+
+        with st.spinner("🕵️‍♂️ Bypassing Amazon security and analyzing text..."):
+            reviews, error = scrape_amazon_reviews(target_url)
             
             if error:
-                st.error(f"Failed: {error}")
-            elif not reviews:
-                st.warning("Found 0 reviews. Try the URL of the 'All Reviews' page.")
+                st.error(f"❌ {error}")
             else:
-                # Analysis Logic
+                # 2. Sentiment Analysis Logic
                 sia = SentimentIntensityAnalyzer()
-                data = []
+                processed_data = []
+                
                 for r in reviews:
-                    score = sia.polarity_scores(r)['compound']
-                    sentiment = "Positive" if score > 0.05 else "Negative" if score < -0.05 else "Neutral"
-                    data.append({"Review": r[:200] + "...", "Sentiment": sentiment, "Score": score})
+                    scores = sia.polarity_scores(r)
+                    compound = scores['compound']
+                    
+                    if compound >= 0.05:
+                        sentiment = "Positive"
+                    elif compound <= -0.05:
+                        sentiment = "Negative"
+                    else:
+                        sentiment = "Neutral"
+                        
+                    processed_data.append({
+                        "Review": r[:300] + "...", 
+                        "Sentiment": sentiment, 
+                        "Score": compound
+                    })
                 
-                df = pd.DataFrame(data)
+                df = pd.DataFrame(processed_data)
+
+                # 3. Dashboard Layout
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Total Reviews", len(df))
+                col2.metric("Positive Reviews", len(df[df['Sentiment'] == 'Positive']))
+                col3.metric("Avg Score", f"{df['Score'].mean():.2f}")
+
+                st.divider()
+
+                # Visual Charts
+                chart_col, table_col = st.columns([1, 1])
                 
-                # Dashboard display
-                c1, c2 = st.columns(2)
-                c1.metric("Total Reviews Found", len(df))
-                c2.metric("Avg Sentiment", f"{df['Score'].mean():.2f}")
+                with chart_col:
+                    st.subheader("Sentiment Share")
+                    st.bar_chart(df['Sentiment'].value_counts())
                 
-                st.bar_chart(df['Sentiment'].value_counts())
-                st.dataframe(df)
+                with table_col:
+                    st.subheader("Data Summary")
+                    st.dataframe(df[['Sentiment', 'Score']], use_container_width=True)
+
+                st.divider()
+                st.subheader("Full Review Analysis")
+                st.table(df)
+
+                # 4. Download Option
+                csv = df.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Download Analysis as CSV", data=csv, file_name="amazon_analysis.csv", mime="text/csv")
