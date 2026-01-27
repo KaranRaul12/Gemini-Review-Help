@@ -4,8 +4,8 @@ import requests
 from bs4 import BeautifulSoup
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 import plotly.express as px
+import google.generativeai as genai
 import nltk
-import re
 
 # Initialize NLTK
 try:
@@ -13,34 +13,20 @@ try:
 except LookupError:
     nltk.download('vader_lexicon')
 
-# --- UI & DARK MODE STYLING ---
-st.set_page_config(page_title="Amazon Insight Pro", layout="wide")
-
-# Custom CSS to fix "white panes" and contrast
+# --- CONFIG & STYLING ---
+st.set_page_config(page_title="Amazon Insight AI", layout="wide")
 st.markdown("""
     <style>
-    /* Main background */
     .stApp { background-color: #0e1117; color: white; }
-    
-    /* KPI Card Styling */
-    [data-testid="stMetricValue"] { color: #FF9900 !important; font-size: 2rem; }
-    [data-testid="stMetricLabel"] { color: #ffffff !important; }
-    div[data-testid="metric-container"] {
-        background-color: #1f2937;
-        border: 1px solid #374151;
-        padding: 15px;
-        border-radius: 10px;
-    }
+    [data-testid="stMetricValue"] { color: #FF9900 !important; }
+    .chat-container { background-color: #1f2937; padding: 20px; border-radius: 15px; border: 1px solid #374151; }
     </style>
     """, unsafe_allow_html=True)
 
-def scrape_amazon_reviews(url):
-    try:
-        api_key = st.secrets["SCRAPER_API_KEY"]
-    except KeyError:
-        st.error("🔑 API Key missing in Secrets!")
-        st.stop()
+# --- BACKEND FUNCTIONS ---
 
+def scrape_amazon(url):
+    api_key = st.secrets["SCRAPER_API_KEY"]
     payload = {'api_key': api_key, 'url': url}
     try:
         response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
@@ -50,80 +36,73 @@ def scrape_amazon_reviews(url):
     except Exception as e:
         return None, str(e)
 
-# --- SIDEBAR ---
+def get_ai_response(user_query, reviews_context):
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    prompt = f"""
+    You are a product analyst. Based on these Amazon reviews, answer the user's question.
+    REVIEWS: {str(reviews_context)[:10000]} 
+    QUESTION: {user_query}
+    """
+    response = model.generate_content(prompt)
+    return response.text
+
+# --- DASHBOARD UI ---
+st.title("📊 Amazon Insight + AI Chat")
+
+if 'reviews_list' not in st.session_store:
+    st.session_store.reviews_list = []
+
 with st.sidebar:
-    st.title("⚙️ Settings")
+    st.header("🛒 Setup")
     target_url = st.text_input("Amazon Review URL:")
-    analyze_btn = st.button("🚀 Run Analysis", use_container_width=True)
+    if st.button("🚀 Analyze Product", use_container_width=True):
+        with st.spinner("Scraping and analyzing..."):
+            reviews, error = scrape_amazon(target_url)
+            if reviews:
+                st.session_store.reviews_list = reviews
+                st.success(f"Found {len(reviews)} reviews!")
+            else:
+                st.error(error)
 
-# --- MAIN DASHBOARD ---
-st.title("📦 Product Sentiment Intelligence")
+# --- ANALYSIS SECTION ---
+if st.session_store.reviews_list:
+    reviews = st.session_store.reviews_list
+    sia = SentimentIntensityAnalyzer()
+    df = pd.DataFrame([{"Review": r, "Score": sia.polarity_scores(r)['compound']} for r in reviews])
+    df['Sentiment'] = df['Score'].apply(lambda x: 'Positive' if x > 0.05 else ('Negative' if x < -0.05 else 'Neutral'))
 
-if analyze_btn and target_url:
-    with st.spinner("Fetching Data..."):
-        reviews, error = scrape_amazon_reviews(target_url)
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.subheader("Sentiment Distribution")
+        fig = px.pie(df, names='Sentiment', color='Sentiment',
+                     color_discrete_map={'Positive':'#FF9900', 'Negative':'#FF0000', 'Neutral':'#808080'},
+                     hole=0.4)
+        fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color="white", showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # --- CHATBOT SECTION ---
+    with col2:
+        st.subheader("💬 Ask the AI about these reviews")
+        st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+        user_input = st.text_input("e.g., 'What are the top 3 pros and cons?'")
         
-        if error:
-            st.error(f"Error: {error}")
-        elif not reviews:
-            st.warning("No reviews found. Try the 'See All Reviews' page URL.")
-        else:
-            # 1. Processing Logic
-            sia = SentimentIntensityAnalyzer()
-            data = []
-            for r in reviews:
-                score = sia.polarity_scores(r)['compound']
-                sentiment = "Positive" if score > 0.05 else "Negative" if score < -0.05 else "Neutral"
-                data.append({"Review": r, "Sentiment": sentiment, "Score": score})
-            
-            df = pd.DataFrame(data)
-            
-            # --- ROW 1: KPI METRICS ---
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Total Reviews", len(df))
-            m2.metric("Positive Reviews", len(df[df['Sentiment']=='Positive']))
-            m3.metric("Negative Reviews", len(df[df['Sentiment']=='Negative']))
-            m4.metric("Avg Score", f"{df['Score'].mean():.2f}")
+        if user_input:
+            with st.spinner("AI is thinking..."):
+                answer = get_ai_response(user_input, reviews)
+                st.markdown(f"**AI:** {answer}")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-            st.divider()
+    st.divider()
+    st.subheader("Detailed Breakdown")
+    
+    def style_sent(val):
+        color = '#006400' if val == 'Positive' else '#8b0000' if val == 'Negative' else '#444444'
+        return f'background-color: {color}; color: white; font-weight: bold;'
+    
+    st.dataframe(df.style.map(style_sent, subset=['Sentiment']), use_container_width=True)
 
-            # --- ROW 2: PIE CHART & KEYWORDS ---
-            c1, c2 = st.columns([1, 1])
-            
-            with c1:
-                st.subheader("Sentiment Share")
-                # Custom Pie Chart: Orange for Positive, Red for Negative
-                fig = px.pie(df, names='Sentiment', 
-                             color='Sentiment',
-                             color_discrete_map={'Positive':'#FF9900', 'Negative':'#FF0000', 'Neutral':'#808080'},
-                             hole=0.4)
-                fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color="white")
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with c2:
-                st.subheader("Top Feedback Keywords")
-                words = re.findall(r'\w+', " ".join(reviews).lower())
-                stop_words = {'the', 'and', 'was', 'for', 'this', 'with', 'that', 'they'}
-                filtered_words = [w for w in words if w not in stop_words and len(w) > 3]
-                key_df = pd.DataFrame(pd.Series(filtered_words).value_counts().head(8)).reset_index()
-                key_df.columns = ['Keyword', 'Frequency']
-                st.table(key_df)
-
-            # --- ROW 3: STYLED DATA TABLE ---
-            st.subheader("Detailed Review Breakdown")
-            
-            # This function fixes the "white washed" look with bold colors
-            def style_sentiment(val):
-                if val == 'Positive':
-                    return 'background-color: #006400; color: white; font-weight: bold;' # Dark Green
-                elif val == 'Negative':
-                    return 'background-color: #8b0000; color: white; font-weight: bold;' # Dark Red
-                return 'background-color: #444444; color: white;' # Grey
-
-            # Applying the style to the Sentiment column
-            styled_df = df.style.map(style_sentiment, subset=['Sentiment'])
-            st.dataframe(styled_df, use_container_width=True)
-
-            st.download_button("📥 Download Report", df.to_csv().encode('utf-8'), "amazon_report.csv")
 else:
-    st.info("👈 Paste an Amazon 'See All Reviews' URL in the sidebar to begin.")
+    st.info("👈 Enter an Amazon Review URL in the sidebar to start.")
