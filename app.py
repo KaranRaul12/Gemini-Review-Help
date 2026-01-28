@@ -44,6 +44,10 @@ st.markdown("""
         text-align: center;
         backdrop-filter: blur(10px);
         transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        min-height: 120px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
     }
     
     .metric-card:hover {
@@ -64,13 +68,25 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- BACKEND LOGIC ---
+
+def get_product_metadata(reviews, title):
+    """Uses AI to extract Company, Model, and Category."""
+    try:
+        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+        prompt = f"Extract only the following 3 fields from this Amazon product title/reviews: 1. Company, 2. Model Name, 3. Category. Return as: Company | Model | Category. Context: {title} {str(reviews)[:2000]}"
+        response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+        parts = response.text.split('|')
+        return [p.strip() for p in parts] if len(parts) == 3 else ["Unknown", "Unknown", "Unknown"]
+    except:
+        return ["N/A", "N/A", "N/A"]
+
 def get_radar_data(reviews):
     dimensions = {
         'Quality': ['quality', 'build', 'premium', 'cheap', 'material'],
         'Value': ['price', 'worth', 'expensive', 'money', 'value'],
-        'Usability': ['easy', 'use', 'setup', 'complicated', 'friendly'],
-        'Durability': ['last', 'broke', 'sturdy', 'strong', 'long-term'],
-        'Service': ['shipping', 'package', 'customer', 'arrived', 'delivery']
+        'Usability': ['easy', 'use', 'setup', 'friendly'],
+        'Durability': ['last', 'broke', 'sturdy', 'strong'],
+        'Service': ['shipping', 'package', 'customer', 'delivery']
     }
     sia = SentimentIntensityAnalyzer()
     scores = []
@@ -99,14 +115,18 @@ def scrape_amazon(url):
         payload = {'api_key': api_key, 'url': url}
         response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
         soup = BeautifulSoup(response.text, "html.parser")
-        return [el.get_text().strip() for el in soup.select('span[data-hook="review-body"]')], None
+        reviews = [el.get_text().strip() for el in soup.select('span[data-hook="review-body"]')]
+        title = soup.find("span", {"id": "productTitle"})
+        title_text = title.get_text().strip() if title else "Product"
+        return reviews, title_text, None
     except Exception as e:
-        return None, str(e)
+        return None, None, str(e)
+
+# --- SESSION ---
+if 'reviews_list' not in st.session_state: st.session_state.reviews_list = []
+if 'meta' not in st.session_state: st.session_state.meta = ["-", "-", "-"]
 
 # --- SIDEBAR ---
-if 'reviews_list' not in st.session_state: st.session_state.reviews_list = []
-if 'chat_answer' not in st.session_state: st.session_state.chat_answer = ""
-
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg", width=150)
     st.markdown("<br>", unsafe_allow_html=True)
@@ -114,11 +134,11 @@ with st.sidebar:
     
     if st.button("🚀 UNLEASH AI", use_container_width=True):
         if target_url:
-            with st.spinner("Processing..."):
-                reviews, error = scrape_amazon(target_url)
+            with st.spinner("Processing Data..."):
+                reviews, title, error = scrape_amazon(target_url)
                 if reviews:
                     st.session_state.reviews_list = reviews
-                    st.session_state.chat_answer = ""
+                    st.session_state.meta = get_product_metadata(reviews, title)
                 else: st.error(error)
 
 # --- DASHBOARD MAIN ---
@@ -129,13 +149,23 @@ if st.session_state.reviews_list:
     sia = SentimentIntensityAnalyzer()
     df = pd.DataFrame([{"Review": r, "Score": sia.polarity_scores(r)['compound']} for r in reviews])
     df['Sentiment'] = df['Score'].apply(lambda x: 'Positive' if x > 0.05 else ('Negative' if x < -0.05 else 'Neutral'))
+    
+    avg_score = df['Score'].mean()
+    
+    # Logic for Pane 4
+    if avg_score > 0.4:
+        rec_text, rec_color = "MUST BUY", "#00ff88"
+    elif avg_score > 0.05:
+        rec_text, rec_color = "GOOD BUY", "#FF9900"
+    else:
+        rec_text, rec_color = "THINK AGAIN", "#ff3333"
 
-    # Metrics Row
+    # --- NEW METRIC PANES ---
     m1, m2, m3, m4 = st.columns(4)
-    m1.markdown(f'<div class="metric-card"><p>Total Feed</p><h2>{len(df)}</h2></div>', unsafe_allow_html=True)
-    m2.markdown(f'<div class="metric-card"><p>Positive</p><h2 style="color:#00ff88">{len(df[df.Sentiment=="Positive"])}</h2></div>', unsafe_allow_html=True)
-    m3.markdown(f'<div class="metric-card"><p>Negative</p><h2 style="color:#ff3333">{len(df[df.Sentiment=="Negative"])}</h2></div>', unsafe_allow_html=True)
-    m4.markdown(f'<div class="metric-card"><p>Avg Score</p><h2 style="color:#FF9900">{df.Score.mean():.2f}</h2></div>', unsafe_allow_html=True)
+    m1.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">COMPANY</p><h3 style="color:#FF9900">{st.session_state.meta[0]}</h3></div>', unsafe_allow_html=True)
+    m2.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">MODEL</p><h3 style="color:#FF9900">{st.session_state.meta[1]}</h3></div>', unsafe_allow_html=True)
+    m3.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">CATEGORY</p><h3 style="color:#FF9900">{st.session_state.meta[2]}</h3></div>', unsafe_allow_html=True)
+    m4.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">RECOMMENDATION</p><h2 style="color:{rec_color}; font-weight:bold;">{rec_text}</h2></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -149,7 +179,7 @@ if st.session_state.reviews_list:
         ))
         fig_radar.update_layout(
             polar=dict(radialaxis=dict(visible=False, range=[0, 1]), bgcolor='rgba(0,0,0,0)'),
-            paper_bgcolor='rgba(0,0,0,0)', font_color="white", title="Product Feature DNA"
+            paper_bgcolor='rgba(0,0,0,0)', font_color="white", title="Product DNA"
         )
         st.plotly_chart(fig_radar, use_container_width=True)
 
@@ -161,7 +191,6 @@ if st.session_state.reviews_list:
 
     st.markdown('<h3 style="color:#FF9900; font-family:Orbitron;">💬 NEURAL ANALYST</h3>', unsafe_allow_html=True)
     
-    # Quick Summary Buttons
     c1, c2 = st.columns(2)
     if c1.button("✅ Quick Pros"):
         st.session_state.chat_answer = get_ai_response("Top 3 pros?", reviews)
@@ -170,19 +199,17 @@ if st.session_state.reviews_list:
 
     user_query = st.text_input("Interrogate the data:")
     if user_query:
-        with st.spinner("Processing Neural Pathways..."):
+        with st.spinner("Processing..."):
             st.session_state.chat_answer = get_ai_response(user_query, reviews)
             
-    if st.session_state.chat_answer:
+    if st.session_state.get('chat_answer'):
         st.markdown(f'<div class="chat-box">{st.session_state.chat_answer}</div>', unsafe_allow_html=True)
 
-    # Data Table - NOW WITH ERROR-SAFE STYLING
     st.markdown("<br>", unsafe_allow_html=True)
     try:
         st.dataframe(df.style.background_gradient(cmap='RdYlGn', subset=['Score']), use_container_width=True)
-    except ImportError:
-        st.warning("Install 'matplotlib' to see the heatmap. Displaying plain table for now.")
+    except:
         st.dataframe(df, use_container_width=True)
 
 else:
-    st.info("👋 System Standby. Awaiting URL Input in Control Panel.")
+    st.info("👋 System Standby. Awaiting URL Input.")
