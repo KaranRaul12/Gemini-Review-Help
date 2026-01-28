@@ -15,7 +15,7 @@ except LookupError:
     nltk.download('vader_lexicon')
 
 # --- UI CONFIG & ADVANCED STYLING ---
-st.set_page_config(page_title="Amazon AI Insights Pro", layout="wide")
+st.set_page_config(page_title="SENTIMENT ANALYSIS", layout="wide")
 
 st.markdown("""
     <style>
@@ -27,15 +27,19 @@ st.markdown("""
         font-family: 'Inter', sans-serif;
     }
     
+    /* Main Title Styling */
     .gradient-text {
         background: linear-gradient(92deg, #FF9900 0%, #FF5F6D 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         font-family: 'Orbitron', sans-serif;
-        font-size: 2.5rem;
-        letter-spacing: 2px;
+        font-size: 2.8rem;
+        letter-spacing: 3px;
+        text-transform: uppercase;
+        margin-bottom: 20px;
     }
 
+    /* Glassmorphism Tiles */
     .metric-card {
         background: rgba(255, 255, 255, 0.03);
         border: 1px solid rgba(255, 255, 255, 0.1);
@@ -70,7 +74,6 @@ st.markdown("""
 # --- BACKEND LOGIC ---
 
 def get_product_metadata(reviews, title):
-    """Uses AI to extract Company, Model, and Category."""
     try:
         client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
         prompt = f"Extract only the following 3 fields from this Amazon product title/reviews: 1. Company, 2. Model Name, 3. Category. Return as: Company | Model | Category. Context: {title} {str(reviews)[:2000]}"
@@ -142,7 +145,7 @@ with st.sidebar:
                 else: st.error(error)
 
 # --- DASHBOARD MAIN ---
-st.markdown('<h1 class="gradient-text">INSIGHT ENGINE PRO</h1>', unsafe_allow_html=True)
+st.markdown('<h1 class="gradient-text">SENTIMENT ANALYSIS</h1>', unsafe_allow_html=True)
 
 if st.session_state.reviews_list:
     reviews = st.session_state.reviews_list
@@ -152,7 +155,7 @@ if st.session_state.reviews_list:
     
     avg_score = df['Score'].mean()
     
-    # Logic for Pane 4
+    # Recommendation Logic
     if avg_score > 0.4:
         rec_text, rec_color = "MUST BUY", "#00ff88"
     elif avg_score > 0.05:
@@ -160,7 +163,7 @@ if st.session_state.reviews_list:
     else:
         rec_text, rec_color = "THINK AGAIN", "#ff3333"
 
-    # --- NEW METRIC PANES ---
+    # --- PANES ---
     m1, m2, m3, m4 = st.columns(4)
     m1.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">COMPANY</p><h3 style="color:#FF9900">{st.session_state.meta[0]}</h3></div>', unsafe_allow_html=True)
     m2.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">MODEL</p><h3 style="color:#FF9900">{st.session_state.meta[1]}</h3></div>', unsafe_allow_html=True)
