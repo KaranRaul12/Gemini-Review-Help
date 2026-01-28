@@ -27,7 +27,6 @@ st.markdown("""
         font-family: 'Inter', sans-serif;
     }
     
-    /* Neon Header */
     .gradient-text {
         background: linear-gradient(92deg, #FF9900 0%, #FF5F6D 100%);
         -webkit-background-clip: text;
@@ -37,7 +36,6 @@ st.markdown("""
         letter-spacing: 2px;
     }
 
-    /* Glassmorphism Tiles */
     .metric-card {
         background: rgba(255, 255, 255, 0.03);
         border: 1px solid rgba(255, 255, 255, 0.1);
@@ -54,7 +52,6 @@ st.markdown("""
         transform: translateY(-8px);
     }
 
-    /* Modern Chat UI */
     .chat-box {
         background: linear-gradient(145deg, rgba(28,31,43,1) 0%, rgba(14,17,23,1) 100%);
         border: 1px solid #333;
@@ -62,22 +59,15 @@ st.markdown("""
         padding: 25px;
         border-radius: 15px;
         box-shadow: 10px 10px 30px rgba(0,0,0,0.5);
-        line-height: 1.6;
     }
-
-    /* Custom Scrollbar */
-    ::-webkit-scrollbar { width: 8px; }
-    ::-webkit-scrollbar-track { background: #0e1117; }
-    ::-webkit-scrollbar-thumb { background: #FF9900; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
 # --- BACKEND LOGIC ---
 def get_radar_data(reviews):
-    """Calculates specific dimension scores using keyword mapping."""
     dimensions = {
         'Quality': ['quality', 'build', 'premium', 'cheap', 'material'],
-        'Value': ['price', 'worth', 'expensive', 'cheap', 'money', 'value'],
+        'Value': ['price', 'worth', 'expensive', 'money', 'value'],
         'Usability': ['easy', 'use', 'setup', 'complicated', 'friendly'],
         'Durability': ['last', 'broke', 'sturdy', 'strong', 'long-term'],
         'Service': ['shipping', 'package', 'customer', 'arrived', 'delivery']
@@ -87,10 +77,9 @@ def get_radar_data(reviews):
     for dim, keywords in dimensions.items():
         relevant_revs = [r for r in reviews if any(k in r.lower() for k in keywords)]
         if not relevant_revs:
-            scores.append(0.5) # Neutral base
+            scores.append(0.5)
         else:
             avg_score = sum([sia.polarity_scores(r)['compound'] for r in relevant_revs]) / len(relevant_revs)
-            # Normalize to 0-1 scale
             scores.append((avg_score + 1) / 2)
     return list(dimensions.keys()), scores
 
@@ -104,26 +93,38 @@ def get_ai_response(query, context):
         return response.text
     except Exception as e: return f"AI Error: {str(e)}"
 
+def scrape_amazon(url):
+    try:
+        api_key = st.secrets["SCRAPER_API_KEY"]
+        payload = {'api_key': api_key, 'url': url}
+        response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
+        soup = BeautifulSoup(response.text, "html.parser")
+        return [el.get_text().strip() for el in soup.select('span[data-hook="review-body"]')], None
+    except Exception as e:
+        return None, str(e)
+
 # --- SIDEBAR ---
+if 'reviews_list' not in st.session_state: st.session_state.reviews_list = []
+if 'chat_answer' not in st.session_state: st.session_state.chat_answer = ""
+
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg", width=150)
     st.markdown("<br>", unsafe_allow_html=True)
     target_url = st.text_input("🔗 Paste Amazon Review URL:")
-    analyze_btn = st.button("🚀 UNLEASH AI", use_container_width=True)
     
-    if analyze_btn and target_url:
-        with st.spinner("Processing..."):
-            # Reuse previous scrape logic
-            api_key = st.secrets["SCRAPER_API_KEY"]
-            res = requests.get('http://api.scraperapi.com', params={'api_key': api_key, 'url': target_url})
-            soup = BeautifulSoup(res.text, "html.parser")
-            st.session_state.reviews_list = [el.get_text().strip() for el in soup.select('span[data-hook="review-body"]')]
-            st.session_state.chat_answer = ""
+    if st.button("🚀 UNLEASH AI", use_container_width=True):
+        if target_url:
+            with st.spinner("Processing..."):
+                reviews, error = scrape_amazon(target_url)
+                if reviews:
+                    st.session_state.reviews_list = reviews
+                    st.session_state.chat_answer = ""
+                else: st.error(error)
 
 # --- DASHBOARD MAIN ---
 st.markdown('<h1 class="gradient-text">INSIGHT ENGINE PRO</h1>', unsafe_allow_html=True)
 
-if st.session_state.get('reviews_list'):
+if st.session_state.reviews_list:
     reviews = st.session_state.reviews_list
     sia = SentimentIntensityAnalyzer()
     df = pd.DataFrame([{"Review": r, "Score": sia.polarity_scores(r)['compound']} for r in reviews])
@@ -140,7 +141,6 @@ if st.session_state.get('reviews_list'):
 
     # Charts Row
     col_radar, col_pie = st.columns([1.2, 1])
-    
     with col_radar:
         labels, values = get_radar_data(reviews)
         fig_radar = go.Figure(data=go.Scatterpolar(
@@ -161,8 +161,14 @@ if st.session_state.get('reviews_list'):
 
     st.markdown('<h3 style="color:#FF9900; font-family:Orbitron;">💬 NEURAL ANALYST</h3>', unsafe_allow_html=True)
     
-    # AI Interaction
-    user_query = st.text_input("Interrogate the data:", placeholder="E.g. Identify any recurring build-quality issues...")
+    # Quick Summary Buttons
+    c1, c2 = st.columns(2)
+    if c1.button("✅ Quick Pros"):
+        st.session_state.chat_answer = get_ai_response("Top 3 pros?", reviews)
+    if c2.button("❌ Quick Cons"):
+        st.session_state.chat_answer = get_ai_response("Top 3 cons?", reviews)
+
+    user_query = st.text_input("Interrogate the data:")
     if user_query:
         with st.spinner("Processing Neural Pathways..."):
             st.session_state.chat_answer = get_ai_response(user_query, reviews)
@@ -170,9 +176,13 @@ if st.session_state.get('reviews_list'):
     if st.session_state.chat_answer:
         st.markdown(f'<div class="chat-box">{st.session_state.chat_answer}</div>', unsafe_allow_html=True)
 
-    # Data Table
+    # Data Table - NOW WITH ERROR-SAFE STYLING
     st.markdown("<br>", unsafe_allow_html=True)
-    st.dataframe(df.style.background_gradient(cmap='RdYlGn', subset=['Score']), use_container_width=True)
+    try:
+        st.dataframe(df.style.background_gradient(cmap='RdYlGn', subset=['Score']), use_container_width=True)
+    except ImportError:
+        st.warning("Install 'matplotlib' to see the heatmap. Displaying plain table for now.")
+        st.dataframe(df, use_container_width=True)
 
 else:
     st.info("👋 System Standby. Awaiting URL Input in Control Panel.")
