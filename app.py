@@ -7,8 +7,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 from google import genai
 import nltk
-from datetime import datetime
-import re
 
 # Initialize NLTK
 try:
@@ -16,141 +14,227 @@ try:
 except LookupError:
     nltk.download('vader_lexicon')
 
-# --- UI CONFIG ---
+# --- UI CONFIG & ADVANCED STYLING ---
 st.set_page_config(page_title="SENTIMENT ANALYSIS", layout="wide")
 
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Inter:wght@300;600&display=swap');
-    .stApp { background: radial-gradient(circle at 50% 50%, #12141d 0%, #050505 100%); color: #e0e0e0; font-family: 'Inter', sans-serif; }
-    .gradient-text { background: linear-gradient(92deg, #FF9900 0%, #FF5F6D 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-family: 'Orbitron', sans-serif; font-size: 2.8rem; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 20px; }
-    .metric-card { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 20px; padding: 20px; text-align: center; backdrop-filter: blur(10px); min-height: 110px; display: flex; flex-direction: column; justify-content: center; }
-    .dna-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.85rem; }
-    .dna-table td { padding: 6px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-    .score-tag { color: #FF9900; font-weight: bold; text-align: right; }
+    
+    .stApp {
+        background: radial-gradient(circle at 50% 50%, #12141d 0%, #050505 100%);
+        color: #e0e0e0;
+        font-family: 'Inter', sans-serif;
+    }
+    
+    .gradient-text {
+        background: linear-gradient(92deg, #FF9900 0%, #FF5F6D 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-family: 'Orbitron', sans-serif;
+        font-size: 2.8rem;
+        letter-spacing: 3px;
+        text-transform: uppercase;
+        margin-bottom: 20px;
+    }
+
+    .metric-card {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 20px;
+        padding: 24px;
+        text-align: center;
+        backdrop-filter: blur(10px);
+        transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        min-height: 120px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+    
+    .metric-card:hover {
+        border-color: #FF9900;
+        box-shadow: 0 0 20px rgba(255, 153, 0, 0.2);
+        transform: translateY(-8px);
+    }
+
+    .dna-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 15px;
+    }
+    .dna-table td {
+        padding: 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .dna-label { font-weight: 600; color: #e0e0e0; }
+    .dna-value { color: #FF9900; font-weight: bold; text-align: right; font-family: 'Orbitron'; }
+
+    .chat-box {
+        background: linear-gradient(145deg, rgba(28,31,43,1) 0%, rgba(14,17,23,1) 100%);
+        border: 1px solid #333;
+        border-left: 4px solid #FF9900;
+        padding: 25px;
+        border-radius: 15px;
+        box-shadow: 10px 10px 30px rgba(0,0,0,0.5);
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- RECOVERY LOGIC ---
-def parse_amazon_date(date_string):
+# --- BACKEND LOGIC ---
+
+def get_product_metadata(reviews, title):
     try:
-        match = re.search(r'on (\d+ \w+ \d{4})', date_string)
-        if match: return datetime.strptime(match.group(1), '%d %B %Y')
-    except: pass
-    return datetime.now()
+        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+        prompt = f"Extract only the following 3 fields from this Amazon product title/reviews: 1. Company, 2. Model Name, 3. Category. Return as: Company | Model | Category. Context: {title} {str(reviews)[:2000]}"
+        response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+        parts = response.text.split('|')
+        return [p.strip() for p in parts] if len(parts) == 3 else ["Unknown", "Unknown", "Unknown"]
+    except:
+        return ["N/A", "N/A", "N/A"]
+
+def get_radar_data(reviews):
+    dimensions = {
+        'Quality': ['quality', 'build', 'premium', 'cheap', 'material'],
+        'Value': ['price', 'worth', 'expensive', 'money', 'value'],
+        'Usability': ['easy', 'use', 'setup', 'friendly'],
+        'Durability': ['last', 'broke', 'sturdy', 'strong'],
+        'Service': ['shipping', 'package', 'customer', 'delivery']
+    }
+    sia = SentimentIntensityAnalyzer()
+    scores = []
+    for dim, keywords in dimensions.items():
+        relevant_revs = [r for r in reviews if any(k in r.lower() for k in keywords)]
+        if not relevant_revs:
+            scores.append(5.0) # Baseline neutral
+        else:
+            avg_score = sum([sia.polarity_scores(r)['compound'] for r in relevant_revs]) / len(relevant_revs)
+            # Map -1 to 1 into 0 to 10 scale
+            scores.append(round(((avg_score + 1) / 2) * 10, 1))
+    return list(dimensions.keys()), scores
+
+def get_ai_response(query, context):
+    try:
+        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+        response = client.models.generate_content(
+            model="gemini-2.0-flash", 
+            contents=f"Product Analyst. Context: {str(context)[:8000]}. Query: {query}"
+        )
+        return response.text
+    except Exception as e: return f"AI Error: {str(e)}"
 
 def scrape_amazon(url):
     try:
         api_key = st.secrets["SCRAPER_API_KEY"]
-        # Use render=true if you have a ScraperAPI plan that supports JS rendering
-        res = requests.get('http://api.scraperapi.com', params={'api_key': api_key, 'url': url, 'keep_headers': 'true'}, timeout=60)
-        if res.status_code != 200: return None, None, f"API Error: {res.status_code}"
-        
-        soup = BeautifulSoup(res.text, "html.parser")
-        
-        # Broaden selector to find reviews in different Amazon layouts
-        rev_elements = soup.find_all("div", {"data-hook": "review"})
-        if not rev_elements:
-            # Fallback selector
-            rev_elements = soup.select('.a-section.review')
-            
-        reviews_data = []
-        for el in rev_elements:
-            body = el.select_one('span[data-hook="review-body"]')
-            date_el = el.select_one('span[data-hook="review-date"]')
-            if body:
-                reviews_data.append({
-                    'text': body.get_text().strip(),
-                    'date': parse_amazon_date(date_el.get_text().strip()) if date_el else datetime.now()
-                })
-        
-        title_el = soup.find("span", {"id": "productTitle"}) or soup.find("h1", {"id": "title"})
-        title_text = title_el.get_text().strip() if title_el else "Unknown Product"
-        
-        if not reviews_data: return None, None, "No reviews found. Amazon might be blocking this specific request."
-        return reviews_data, title_text, None
+        payload = {'api_key': api_key, 'url': url}
+        response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
+        soup = BeautifulSoup(response.text, "html.parser")
+        reviews = [el.get_text().strip() for el in soup.select('span[data-hook="review-body"]')]
+        title = soup.find("span", {"id": "productTitle"})
+        title_text = title.get_text().strip() if title else "Product"
+        return reviews, title_text, None
     except Exception as e:
         return None, None, str(e)
 
 # --- SESSION ---
 if 'reviews_list' not in st.session_state: st.session_state.reviews_list = []
 if 'meta' not in st.session_state: st.session_state.meta = ["-", "-", "-"]
-if 'auth' not in st.session_state: st.session_state.auth = (0, 0)
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg", width=150)
-    target_url = st.text_input("🔗 Amazon URL:")
+    st.markdown("<br>", unsafe_allow_html=True)
+    target_url = st.text_input("🔗 Paste Amazon Review URL:")
+    
     if st.button("🚀 UNLEASH AI", use_container_width=True):
         if target_url:
-            with st.spinner("Bypassing Gateways..."):
-                revs, title, err = scrape_amazon(target_url)
-                if revs:
-                    st.session_state.reviews_list = revs
-                    # AI Context
-                    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-                    meta_res = client.models.generate_content(model="gemini-2.0-flash", contents=f"Return: Company | Model | Category based on: {title}")
-                    st.session_state.meta = meta_res.text.split('|')
-                    st.session_state.auth = (82, 18) # Simulation fallback for speed
-                else:
-                    st.error(f"Analysis Failed: {err}")
+            with st.spinner("Processing Data..."):
+                reviews, title, error = scrape_amazon(target_url)
+                if reviews:
+                    st.session_state.reviews_list = reviews
+                    st.session_state.meta = get_product_metadata(reviews, title)
+                else: st.error(error)
 
-# --- DASHBOARD ---
+# --- DASHBOARD MAIN ---
 st.markdown('<h1 class="gradient-text">SENTIMENT ANALYSIS</h1>', unsafe_allow_html=True)
 
 if st.session_state.reviews_list:
-    rev_data = st.session_state.reviews_list
+    reviews = st.session_state.reviews_list
     sia = SentimentIntensityAnalyzer()
-    df = pd.DataFrame([{"Date": r['date'], "Review": r['text'], "Score": sia.polarity_scores(r['text'])['compound']} for r in rev_data])
+    df = pd.DataFrame([{"Review": r, "Score": sia.polarity_scores(r)['compound']} for r in reviews])
     df['Sentiment'] = df['Score'].apply(lambda x: 'Positive' if x > 0.05 else ('Negative' if x < -0.05 else 'Neutral'))
     
-    # Panes
-    m1, m2, m3, m4 = st.columns(4)
-    meta = st.session_state.meta
-    m1.markdown(f'<div class="metric-card"><p style="font-size:0.7rem; opacity:0.6;">COMPANY</p><h3 style="color:#FF9900">{meta[0]}</h3></div>', unsafe_allow_html=True)
-    m2.markdown(f'<div class="metric-card"><p style="font-size:0.7rem; opacity:0.6;">MODEL</p><h3 style="color:#FF9900">{meta[1]}</h3></div>', unsafe_allow_html=True)
-    m3.markdown(f'<div class="metric-card"><p style="font-size:0.7rem; opacity:0.6;">CATEGORY</p><h3 style="color:#FF9900">{meta[2]}</h3></div>', unsafe_allow_html=True)
+    avg_score = df['Score'].mean()
     
-    avg_s = df['Score'].mean()
-    rec, col = ("MUST BUY", "#00ff88") if avg_s > 0.3 else (("GOOD BUY", "#FF9900") if avg_s > 0.0 else ("THINK AGAIN", "#ff3333"))
-    m4.markdown(f'<div class="metric-card"><p style="font-size:0.7rem; opacity:0.6;">RECOMMENDATION</p><h2 style="color:{col}; font-weight:bold;">{rec}</h2></div>', unsafe_allow_html=True)
+    if avg_score > 0.4:
+        rec_text, rec_color = "MUST BUY", "#00ff88"
+    elif avg_score > 0.05:
+        rec_text, rec_color = "GOOD BUY", "#FF9900"
+    else:
+        rec_text, rec_color = "THINK AGAIN", "#ff3333"
 
-    # DNA & Authenticity Row
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown('<p style="font-family:Orbitron; color:#FF9900;">🧬 PRODUCT DNA</p>', unsafe_allow_html=True)
-        dims = {'Quality':['quality','build'],'Value':['price','worth'],'Usability':['easy','use'],'Durability':['last','strong'],'Service':['ship','pack']}
-        scores = []
-        for d, k in dims.items():
-            rel = [r['text'] for r in rev_data if any(x in r['text'].lower() for x in k)]
-            sc = (sum([sia.polarity_scores(r)['compound'] for r in rel])/len(rel)+1)/2 if rel else 0.5
-            scores.append(round(sc*10, 1))
-        
-        fig_r = go.Figure(data=go.Scatterpolar(r=scores, theta=list(dims.keys()), fill='toself', marker=dict(color='#FF9900')))
-        fig_r.update_layout(polar=dict(radialaxis=dict(visible=False, range=[0, 10]), bgcolor='rgba(0,0,0,0)'), paper_bgcolor='rgba(0,0,0,0)', font_color="white", height=300)
-        st.plotly_chart(fig_r, use_container_width=True)
+    # --- PANES ---
+    m1, m2, m3, m4 = st.columns(4)
+    m1.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">COMPANY</p><h3 style="color:#FF9900">{st.session_state.meta[0]}</h3></div>', unsafe_allow_html=True)
+    m2.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">MODEL</p><h3 style="color:#FF9900">{st.session_state.meta[1]}</h3></div>', unsafe_allow_html=True)
+    m3.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">CATEGORY</p><h3 style="color:#FF9900">{st.session_state.meta[2]}</h3></div>', unsafe_allow_html=True)
+    m4.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">RECOMMENDATION</p><h2 style="color:{rec_color}; font-weight:bold;">{rec_text}</h2></div>', unsafe_allow_html=True)
 
-    with c2:
-        st.markdown('<p style="font-family:Orbitron; color:#FF9900;">⚖️ AUTHENTICITY SHARE</p>', unsafe_allow_html=True)
-        gen, fak = st.session_state.auth
-        fig_a = px.pie(values=[gen, fak], names=['Genuine', 'Fake'], hole=0.7, color_discrete_sequence=['#00ff88', '#ff3333'])
-        fig_a.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color="white", showlegend=True, height=300)
-        st.plotly_chart(fig_a, use_container_width=True)
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    # Trend Analysis
-    st.markdown('<p style="font-family:Orbitron; color:#FF9900;">📈 SENTIMENT TREND (MOMENTUM)</p>', unsafe_allow_html=True)
-    df_trend = df.set_index('Date').resample('ME').mean().reset_index()
-    fig_t = px.line(df_trend, x='Date', y='Score', markers=True)
-    fig_t.update_traces(line_color='#FF9900', line_width=3)
-    fig_t.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color="white", xaxis=dict(showgrid=False), yaxis=dict(showgrid=False), height=300)
-    st.plotly_chart(fig_t, use_container_width=True)
+    # Charts Row
+    col_radar, col_dna_list = st.columns([1.5, 1])
+    
+    labels, values = get_radar_data(reviews)
+
+    with col_radar:
+        fig_radar = go.Figure(data=go.Scatterpolar(
+            r=values, theta=labels, fill='toself',
+            marker=dict(color='#FF9900'), line=dict(color='#FF9900')
+        ))
+        fig_radar.update_layout(
+            polar=dict(radialaxis=dict(visible=False, range=[0, 10]), bgcolor='rgba(0,0,0,0)'),
+            paper_bgcolor='rgba(0,0,0,0)', font_color="white", title="Product DNA Visualization"
+        )
+        st.plotly_chart(fig_radar, use_container_width=True)
+
+    with col_dna_list:
+        st.markdown('<p style="font-family:Orbitron; color:#FF9900; margin-top:20px;">🧬 DNA SCORECARD</p>', unsafe_allow_html=True)
+        dna_html = '<table class="dna-table">'
+        for label, val in zip(labels, values):
+            dna_html += f'<tr><td class="dna-label">{label}</td><td class="dna-value">{val}/10</td></tr>'
+        dna_html += '</table>'
+        st.markdown(dna_html, unsafe_allow_html=True)
+
+    # Visual Sentiment Share
+    st.markdown("<br>", unsafe_allow_html=True)
+    fig_pie = px.pie(df, names='Sentiment', hole=0.7, 
+                     color='Sentiment', color_discrete_map={'Positive':'#00ff88','Negative':'#ff3333','Neutral':'#444'})
+    fig_pie.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color="white", showlegend=True, height=300, title="Sentiment Distribution")
+    st.plotly_chart(fig_pie, use_container_width=True)
 
     # Neural Analyst
     st.markdown('<h3 style="color:#FF9900; font-family:Orbitron;">💬 NEURAL ANALYST</h3>', unsafe_allow_html=True)
-    user_q = st.text_input("Interrogate Data:")
-    if user_q:
-        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-        ans = client.models.generate_content(model="gemini-2.0-flash", contents=f"Review Data: {str(rev_data)[:5000]}. Query: {user_q}")
-        st.markdown(f'<div class="chat-box">{ans.text}</div>', unsafe_allow_html=True)
+    
+    c1, c2 = st.columns(2)
+    if c1.button("✅ Quick Pros"):
+        st.session_state.chat_answer = get_ai_response("Top 3 pros?", reviews)
+    if c2.button("❌ Quick Cons"):
+        st.session_state.chat_answer = get_ai_response("Top 3 cons?", reviews)
+
+    user_query = st.text_input("Interrogate the data:")
+    if user_query:
+        with st.spinner("Processing..."):
+            st.session_state.chat_answer = get_ai_response(user_query, reviews)
+            
+    if st.session_state.get('chat_answer'):
+        st.markdown(f'<div class="chat-box">{st.session_state.chat_answer}</div>', unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    try:
+        st.dataframe(df.style.background_gradient(cmap='RdYlGn', subset=['Score']), use_container_width=True)
+    except:
+        st.dataframe(df, use_container_width=True)
+
 else:
-    st.info("👋 System Standby. Ensure your ScraperAPI Key and Gemini Key are set in Secrets.")
+    st.info("👋 System Standby. Awaiting URL Input.")
