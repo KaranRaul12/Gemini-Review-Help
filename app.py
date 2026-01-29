@@ -14,21 +14,28 @@ try:
 except LookupError:
     nltk.download('vader_lexicon')
 
-# --- UI CONFIG & ADVANCED STYLING ---
+# --- UI CONFIG & VIOLET THEME ---
 st.set_page_config(page_title="SENTIMENT ANALYSIS", layout="wide")
 
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Inter:wght@300;600&display=swap');
     
+    /* Violet to White Background */
     .stApp {
-        background: radial-gradient(circle at 50% 50%, #12141d 0%, #050505 100%);
-        color: #e0e0e0;
+        background: linear-gradient(135deg, #2e004f 0%, #ffffff 100%);
+        color: #2e004f;
         font-family: 'Inter', sans-serif;
     }
     
+    /* Sidebar styling for contrast */
+    [data-testid="stSidebar"] {
+        background-color: rgba(46, 0, 79, 0.05);
+        border-right: 1px solid rgba(46, 0, 79, 0.1);
+    }
+
     .gradient-text {
-        background: linear-gradient(92deg, #FF9900 0%, #FF5F6D 100%);
+        background: linear-gradient(92deg, #6a11cb 0%, #2575fc 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         font-family: 'Orbitron', sans-serif;
@@ -38,14 +45,16 @@ st.markdown("""
         margin-bottom: 20px;
     }
 
+    /* Glassmorphism Tiles - Adapted for light background */
     .metric-card {
-        background: rgba(255, 255, 255, 0.03);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.7);
+        border: 1px solid rgba(106, 17, 203, 0.2);
         border-radius: 20px;
         padding: 24px;
         text-align: center;
         backdrop-filter: blur(10px);
-        transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.1);
+        transition: all 0.3s ease;
         min-height: 120px;
         display: flex;
         flex-direction: column;
@@ -53,31 +62,36 @@ st.markdown("""
     }
     
     .metric-card:hover {
-        border-color: #FF9900;
-        box-shadow: 0 0 20px rgba(255, 153, 0, 0.2);
-        transform: translateY(-8px);
+        border-color: #6a11cb;
+        transform: translateY(-5px);
+        box-shadow: 0 12px 40px 0 rgba(31, 38, 135, 0.2);
     }
 
     .dna-table {
         width: 100%;
         border-collapse: collapse;
         margin-top: 15px;
+        color: #2e004f;
     }
     .dna-table td {
         padding: 10px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        border-bottom: 1px solid rgba(46, 0, 79, 0.1);
     }
-    .dna-label { font-weight: 600; color: #e0e0e0; }
-    .dna-value { color: #FF9900; font-weight: bold; text-align: right; font-family: 'Orbitron'; }
+    .dna-label { font-weight: 600; }
+    .dna-value { color: #6a11cb; font-weight: bold; text-align: right; font-family: 'Orbitron'; }
 
     .chat-box {
-        background: linear-gradient(145deg, rgba(28,31,43,1) 0%, rgba(14,17,23,1) 100%);
-        border: 1px solid #333;
-        border-left: 4px solid #FF9900;
+        background: white;
+        border: 1px solid #ddd;
+        border-left: 5px solid #6a11cb;
         padding: 25px;
         border-radius: 15px;
-        box-shadow: 10px 10px 30px rgba(0,0,0,0.5);
+        color: #333;
+        box-shadow: 5px 5px 15px rgba(0,0,0,0.05);
     }
+    
+    /* Adjusting visibility for standard st elements */
+    .stDataFrame { background: white; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -106,10 +120,9 @@ def get_radar_data(reviews):
     for dim, keywords in dimensions.items():
         relevant_revs = [r for r in reviews if any(k in r.lower() for k in keywords)]
         if not relevant_revs:
-            scores.append(5.0) # Baseline neutral
+            scores.append(5.0)
         else:
             avg_score = sum([sia.polarity_scores(r)['compound'] for r in relevant_revs]) / len(relevant_revs)
-            # Map -1 to 1 into 0 to 10 scale
             scores.append(round(((avg_score + 1) / 2) * 10, 1))
     return list(dimensions.keys()), scores
 
@@ -143,12 +156,10 @@ if 'meta' not in st.session_state: st.session_state.meta = ["-", "-", "-"]
 # --- SIDEBAR ---
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg", width=150)
-    st.markdown("<br>", unsafe_allow_html=True)
     target_url = st.text_input("🔗 Paste Amazon Review URL:")
-    
     if st.button("🚀 UNLEASH AI", use_container_width=True):
         if target_url:
-            with st.spinner("Processing Data..."):
+            with st.spinner("Processing..."):
                 reviews, title, error = scrape_amazon(target_url)
                 if reviews:
                     st.session_state.reviews_list = reviews
@@ -167,39 +178,38 @@ if st.session_state.reviews_list:
     avg_score = df['Score'].mean()
     
     if avg_score > 0.4:
-        rec_text, rec_color = "MUST BUY", "#00ff88"
+        rec_text, rec_color = "MUST BUY", "#28a745"
     elif avg_score > 0.05:
-        rec_text, rec_color = "GOOD BUY", "#FF9900"
+        rec_text, rec_color = "GOOD BUY", "#6a11cb"
     else:
-        rec_text, rec_color = "THINK AGAIN", "#ff3333"
+        rec_text, rec_color = "THINK AGAIN", "#dc3545"
 
     # --- PANES ---
     m1, m2, m3, m4 = st.columns(4)
-    m1.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">COMPANY</p><h3 style="color:#FF9900">{st.session_state.meta[0]}</h3></div>', unsafe_allow_html=True)
-    m2.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">MODEL</p><h3 style="color:#FF9900">{st.session_state.meta[1]}</h3></div>', unsafe_allow_html=True)
-    m3.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">CATEGORY</p><h3 style="color:#FF9900">{st.session_state.meta[2]}</h3></div>', unsafe_allow_html=True)
+    m1.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">COMPANY</p><h3 style="color:#6a11cb">{st.session_state.meta[0]}</h3></div>', unsafe_allow_html=True)
+    m2.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">MODEL</p><h3 style="color:#6a11cb">{st.session_state.meta[1]}</h3></div>', unsafe_allow_html=True)
+    m3.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">CATEGORY</p><h3 style="color:#6a11cb">{st.session_state.meta[2]}</h3></div>', unsafe_allow_html=True)
     m4.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">RECOMMENDATION</p><h2 style="color:{rec_color}; font-weight:bold;">{rec_text}</h2></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Charts Row
     col_radar, col_dna_list = st.columns([1.5, 1])
-    
     labels, values = get_radar_data(reviews)
 
     with col_radar:
         fig_radar = go.Figure(data=go.Scatterpolar(
             r=values, theta=labels, fill='toself',
-            marker=dict(color='#FF9900'), line=dict(color='#FF9900')
+            marker=dict(color='#6a11cb'), line=dict(color='#6a11cb')
         ))
         fig_radar.update_layout(
-            polar=dict(radialaxis=dict(visible=False, range=[0, 10]), bgcolor='rgba(0,0,0,0)'),
-            paper_bgcolor='rgba(0,0,0,0)', font_color="white", title="Product DNA Visualization"
+            polar=dict(radialaxis=dict(visible=False, range=[0, 10]), bgcolor='rgba(255,255,255,0.5)'),
+            paper_bgcolor='rgba(0,0,0,0)', font_color="#2e004f", title="Product DNA Visualization"
         )
         st.plotly_chart(fig_radar, use_container_width=True)
 
     with col_dna_list:
-        st.markdown('<p style="font-family:Orbitron; color:#FF9900; margin-top:20px;">🧬 DNA SCORECARD</p>', unsafe_allow_html=True)
+        st.markdown('<p style="font-family:Orbitron; color:#6a11cb; margin-top:20px;">🧬 DNA SCORECARD</p>', unsafe_allow_html=True)
         dna_html = '<table class="dna-table">'
         for label, val in zip(labels, values):
             dna_html += f'<tr><td class="dna-label">{label}</td><td class="dna-value">{val}/10</td></tr>'
@@ -209,12 +219,12 @@ if st.session_state.reviews_list:
     # Visual Sentiment Share
     st.markdown("<br>", unsafe_allow_html=True)
     fig_pie = px.pie(df, names='Sentiment', hole=0.7, 
-                     color='Sentiment', color_discrete_map={'Positive':'#00ff88','Negative':'#ff3333','Neutral':'#444'})
-    fig_pie.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color="white", showlegend=True, height=300, title="Sentiment Distribution")
+                     color='Sentiment', color_discrete_map={'Positive':'#28a745','Negative':'#dc3545','Neutral':'#6c757d'})
+    fig_pie.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color="#2e004f", showlegend=True, height=300, title="Sentiment Distribution")
     st.plotly_chart(fig_pie, use_container_width=True)
 
     # Neural Analyst
-    st.markdown('<h3 style="color:#FF9900; font-family:Orbitron;">💬 NEURAL ANALYST</h3>', unsafe_allow_html=True)
+    st.markdown('<h3 style="color:#6a11cb; font-family:Orbitron;">💬 NEURAL ANALYST</h3>', unsafe_allow_html=True)
     
     c1, c2 = st.columns(2)
     if c1.button("✅ Quick Pros"):
@@ -231,10 +241,7 @@ if st.session_state.reviews_list:
         st.markdown(f'<div class="chat-box">{st.session_state.chat_answer}</div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
-    try:
-        st.dataframe(df.style.background_gradient(cmap='RdYlGn', subset=['Score']), use_container_width=True)
-    except:
-        st.dataframe(df, use_container_width=True)
+    st.dataframe(df.style.background_gradient(cmap='Purples', subset=['Score']), use_container_width=True)
 
 else:
     st.info("👋 System Standby. Awaiting URL Input.")
