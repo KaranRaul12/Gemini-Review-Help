@@ -2,209 +2,217 @@ import streamlit as st
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 import plotly.express as px
 import plotly.graph_objects as go
 from google import genai
+import nltk
 
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.svm import SVC
-from sklearn.pipeline import Pipeline
-
-# ---------------- NLTK ----------------
+# Initialize NLTK
 try:
     nltk.data.find('sentiment/vader_lexicon.zip')
 except LookupError:
     nltk.download('vader_lexicon')
 
-# ---------------- PAGE CONFIG ----------------
-st.set_page_config(page_title="AI Product Sentiment Intelligence", layout="wide")
+# --- UI CONFIG & ADVANCED STYLING ---
+st.set_page_config(page_title="SENTIMENT ANALYSIS", layout="wide")
 
-# ---------------- UI CSS ----------------
 st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Inter:wght@300;600&display=swap');
+    
+    .stApp {
+        background: radial-gradient(circle at 50% 50%, #12141d 0%, #050505 100%);
+        color: #e0e0e0;
+        font-family: 'Inter', sans-serif;
+    }
+    
+    /* Main Title Styling */
+    .gradient-text {
+        background: linear-gradient(92deg, #FF9900 0%, #FF5F6D 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-family: 'Orbitron', sans-serif;
+        font-size: 2.8rem;
+        letter-spacing: 3px;
+        text-transform: uppercase;
+        margin-bottom: 20px;
+    }
 
-:root {
-    --bg: #0b0f14;
-    --card: rgba(255,255,255,0.06);
-    --border: rgba(255,255,255,0.12);
-    --accent: #ff9900;
-    --muted: rgba(255,255,255,0.65);
-}
+    /* Glassmorphism Tiles */
+    .metric-card {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 20px;
+        padding: 24px;
+        text-align: center;
+        backdrop-filter: blur(10px);
+        transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        min-height: 120px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+    
+    .metric-card:hover {
+        border-color: #FF9900;
+        box-shadow: 0 0 20px rgba(255, 153, 0, 0.2);
+        transform: translateY(-8px);
+    }
 
-html, body, [class*="css"] {
-    font-family: 'Inter', sans-serif;
-}
-
-.stApp {
-    background: linear-gradient(180deg, #0b0f14, #050608);
-    color: white;
-}
-
-.card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 18px;
-    padding: 22px;
-    transition: 0.25s;
-}
-
-.card:hover {
-    transform: translateY(-4px);
-    border-color: var(--accent);
-}
-
-.metric-label {
-    font-size: 0.75rem;
-    letter-spacing: 1px;
-    color: var(--muted);
-}
-
-.metric-value {
-    font-size: 1.3rem;
-    font-weight: 600;
-    margin-top: 6px;
-}
-
-section[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #0e1218, #07090d);
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ---------------- UI HELPER ----------------
-def metric_card(label, value, color="#ffffff"):
-    st.markdown(f"""
-    <div class="card">
-        <div class="metric-label">{label}</div>
-        <div class="metric-value" style="color:{color}">{value}</div>
-    </div>
+    .chat-box {
+        background: linear-gradient(145deg, rgba(28,31,43,1) 0%, rgba(14,17,23,1) 100%);
+        border: 1px solid #333;
+        border-left: 4px solid #FF9900;
+        padding: 25px;
+        border-radius: 15px;
+        box-shadow: 10px 10px 30px rgba(0,0,0,0.5);
+    }
+    </style>
     """, unsafe_allow_html=True)
 
-# ---------------- BACKEND ----------------
-def scrape_amazon(url):
-    try:
-        payload = {
-            "api_key": st.secrets["SCRAPER_API_KEY"],
-            "url": url
-        }
-        r = requests.get("http://api.scraperapi.com", params=payload, timeout=60)
-        soup = BeautifulSoup(r.text, "html.parser")
-        reviews = [x.get_text().strip() for x in soup.select('span[data-hook="review-body"]')]
-        title = soup.find("span", {"id": "productTitle"})
-        return reviews, title.get_text().strip() if title else "Product", None
-    except Exception as e:
-        return None, None, str(e)
+# --- BACKEND LOGIC ---
 
 def get_product_metadata(reviews, title):
     try:
         client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-        prompt = f"Extract Company | Model | Category from product: {title}"
-        res = client.models.generate_content("gemini-2.0-flash", prompt)
-        parts = res.text.split("|")
-        return [p.strip() for p in parts] if len(parts) == 3 else ["Unknown"] * 3
+        prompt = f"Extract only the following 3 fields from this Amazon product title/reviews: 1. Company, 2. Model Name, 3. Category. Return as: Company | Model | Category. Context: {title} {str(reviews)[:2000]}"
+        response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+        parts = response.text.split('|')
+        return [p.strip() for p in parts] if len(parts) == 3 else ["Unknown", "Unknown", "Unknown"]
     except:
         return ["N/A", "N/A", "N/A"]
 
-def detect_fake_reviews_svm(reviews):
+def get_radar_data(reviews):
+    dimensions = {
+        'Quality': ['quality', 'build', 'premium', 'cheap', 'material'],
+        'Value': ['price', 'worth', 'expensive', 'money', 'value'],
+        'Usability': ['easy', 'use', 'setup', 'friendly'],
+        'Durability': ['last', 'broke', 'sturdy', 'strong'],
+        'Service': ['shipping', 'package', 'customer', 'delivery']
+    }
     sia = SentimentIntensityAnalyzer()
-
-    labels = []
-    for r in reviews:
-        score = sia.polarity_scores(r)["compound"]
-        if abs(score) > 0.85 or len(r.split()) < 6:
-            labels.append(1)  # Fake
+    scores = []
+    for dim, keywords in dimensions.items():
+        relevant_revs = [r for r in reviews if any(k in r.lower() for k in keywords)]
+        if not relevant_revs:
+            scores.append(0.5)
         else:
-            labels.append(0)  # Genuine
+            avg_score = sum([sia.polarity_scores(r)['compound'] for r in relevant_revs]) / len(relevant_revs)
+            scores.append((avg_score + 1) / 2)
+    return list(dimensions.keys()), scores
 
-    model = Pipeline([
-        ("tfidf", TfidfVectorizer(stop_words="english", max_features=3000)),
-        ("svm", SVC(kernel="linear", probability=True))
-    ])
+def get_ai_response(query, context):
+    try:
+        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+        response = client.models.generate_content(
+            model="gemini-2.0-flash", 
+            contents=f"Product Analyst. Context: {str(context)[:8000]}. Query: {query}"
+        )
+        return response.text
+    except Exception as e: return f"AI Error: {str(e)}"
 
-    model.fit(reviews, labels)
-    preds = model.predict(reviews)
+def scrape_amazon(url):
+    try:
+        api_key = st.secrets["SCRAPER_API_KEY"]
+        payload = {'api_key': api_key, 'url': url}
+        response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
+        soup = BeautifulSoup(response.text, "html.parser")
+        reviews = [el.get_text().strip() for el in soup.select('span[data-hook="review-body"]')]
+        title = soup.find("span", {"id": "productTitle"})
+        title_text = title.get_text().strip() if title else "Product"
+        return reviews, title_text, None
+    except Exception as e:
+        return None, None, str(e)
 
-    fake = sum(preds)
-    genuine = len(preds) - fake
-    return fake, genuine
+# --- SESSION ---
+if 'reviews_list' not in st.session_state: st.session_state.reviews_list = []
+if 'meta' not in st.session_state: st.session_state.meta = ["-", "-", "-"]
 
-# ---------------- SESSION ----------------
-if "reviews" not in st.session_state:
-    st.session_state.reviews = []
-if "meta" not in st.session_state:
-    st.session_state.meta = ["-", "-", "-"]
-
-# ---------------- SIDEBAR ----------------
+# --- SIDEBAR ---
 with st.sidebar:
-    st.markdown("## 🔗 Amazon Review URL")
-    url = st.text_input("Paste product link")
-
-    if st.button("Analyze"):
-        if url:
-            with st.spinner("Analyzing reviews..."):
-                reviews, title, err = scrape_amazon(url)
+    st.image("https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg", width=150)
+    st.markdown("<br>", unsafe_allow_html=True)
+    target_url = st.text_input("🔗 Paste Amazon Review URL:")
+    
+    if st.button("🚀 UNLEASH AI", use_container_width=True):
+        if target_url:
+            with st.spinner("Processing Data..."):
+                reviews, title, error = scrape_amazon(target_url)
                 if reviews:
-                    st.session_state.reviews = reviews
+                    st.session_state.reviews_list = reviews
                     st.session_state.meta = get_product_metadata(reviews, title)
-                else:
-                    st.error(err)
+                else: st.error(error)
 
-# ---------------- MAIN ----------------
-st.markdown("## AI Product Sentiment Intelligence")
-st.caption("Sentiment analysis + Fake review detection using NLP & SVM")
+# --- DASHBOARD MAIN ---
+st.markdown('<h1 class="gradient-text">SENTIMENT ANALYSIS</h1>', unsafe_allow_html=True)
 
-if st.session_state.reviews:
+if st.session_state.reviews_list:
+    reviews = st.session_state.reviews_list
     sia = SentimentIntensityAnalyzer()
+    df = pd.DataFrame([{"Review": r, "Score": sia.polarity_scores(r)['compound']} for r in reviews])
+    df['Sentiment'] = df['Score'].apply(lambda x: 'Positive' if x > 0.05 else ('Negative' if x < -0.05 else 'Neutral'))
+    
+    avg_score = df['Score'].mean()
+    
+    # Recommendation Logic
+    if avg_score > 0.4:
+        rec_text, rec_color = "MUST BUY", "#00ff88"
+    elif avg_score > 0.05:
+        rec_text, rec_color = "GOOD BUY", "#FF9900"
+    else:
+        rec_text, rec_color = "THINK AGAIN", "#ff3333"
 
-    df = pd.DataFrame([
-        {"Review": r, "Score": sia.polarity_scores(r)["compound"]}
-        for r in st.session_state.reviews
-    ])
+    # --- PANES ---
+    m1, m2, m3, m4 = st.columns(4)
+    m1.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">COMPANY</p><h3 style="color:#FF9900">{st.session_state.meta[0]}</h3></div>', unsafe_allow_html=True)
+    m2.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">MODEL</p><h3 style="color:#FF9900">{st.session_state.meta[1]}</h3></div>', unsafe_allow_html=True)
+    m3.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">CATEGORY</p><h3 style="color:#FF9900">{st.session_state.meta[2]}</h3></div>', unsafe_allow_html=True)
+    m4.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">RECOMMENDATION</p><h2 style="color:{rec_color}; font-weight:bold;">{rec_text}</h2></div>', unsafe_allow_html=True)
 
-    df["Sentiment"] = df["Score"].apply(
-        lambda x: "Positive" if x > 0.05 else "Negative" if x < -0.05 else "Neutral"
-    )
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    avg = df["Score"].mean()
-    rec, rec_color = (
-        ("MUST BUY", "#00ff88") if avg > 0.4 else
-        ("GOOD BUY", "#ff9900") if avg > 0.05 else
-        ("THINK AGAIN", "#ff3333")
-    )
+    # Charts Row
+    col_radar, col_pie = st.columns([1.2, 1])
+    with col_radar:
+        labels, values = get_radar_data(reviews)
+        fig_radar = go.Figure(data=go.Scatterpolar(
+            r=values, theta=labels, fill='toself',
+            marker=dict(color='#FF9900'), line=dict(color='#FF9900')
+        ))
+        fig_radar.update_layout(
+            polar=dict(radialaxis=dict(visible=False, range=[0, 1]), bgcolor='rgba(0,0,0,0)'),
+            paper_bgcolor='rgba(0,0,0,0)', font_color="white", title="Product DNA"
+        )
+        st.plotly_chart(fig_radar, use_container_width=True)
 
-    fake_cnt, genuine_cnt = detect_fake_reviews_svm(st.session_state.reviews)
+    with col_pie:
+        fig_pie = px.pie(df, names='Sentiment', hole=0.7, 
+                         color='Sentiment', color_discrete_map={'Positive':'#00ff88','Negative':'#ff3333','Neutral':'#444'})
+        fig_pie.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color="white", showlegend=False)
+        st.plotly_chart(fig_pie, use_container_width=True)
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1: metric_card("COMPANY", st.session_state.meta[0], "#ff9900")
-    with c2: metric_card("MODEL", st.session_state.meta[1], "#ff9900")
-    with c3: metric_card("CATEGORY", st.session_state.meta[2], "#ff9900")
-    with c4: metric_card("RECOMMENDATION", rec, rec_color)
-    with c5: metric_card("FAKE REVIEWS", fake_cnt, "#ff3333")
+    st.markdown('<h3 style="color:#FF9900; font-family:Orbitron;">💬 NEURAL ANALYST</h3>', unsafe_allow_html=True)
+    
+    c1, c2 = st.columns(2)
+    if c1.button("✅ Quick Pros"):
+        st.session_state.chat_answer = get_ai_response("Top 3 pros?", reviews)
+    if c2.button("❌ Quick Cons"):
+        st.session_state.chat_answer = get_ai_response("Top 3 cons?", reviews)
 
-    st.markdown("### 📊 Sentiment Distribution")
-    st.plotly_chart(px.pie(df, names="Sentiment", hole=0.7), use_container_width=True)
+    user_query = st.text_input("Interrogate the data:")
+    if user_query:
+        with st.spinner("Processing..."):
+            st.session_state.chat_answer = get_ai_response(user_query, reviews)
+            
+    if st.session_state.get('chat_answer'):
+        st.markdown(f'<div class="chat-box">{st.session_state.chat_answer}</div>', unsafe_allow_html=True)
 
-    st.markdown("### 🚨 Fake vs Genuine Reviews")
-    fake_df = pd.DataFrame({
-        "Type": ["Fake", "Genuine"],
-        "Count": [fake_cnt, genuine_cnt]
-    })
+    st.markdown("<br>", unsafe_allow_html=True)
+    try:
+        st.dataframe(df.style.background_gradient(cmap='RdYlGn', subset=['Score']), use_container_width=True)
+    except:
+        st.dataframe(df, use_container_width=True)
 
-    st.plotly_chart(
-        px.pie(fake_df, names="Type", values="Count", hole=0.6,
-               color="Type",
-               color_discrete_map={"Fake": "#ff3333", "Genuine": "#00ff88"}),
-        use_container_width=True
-    )
-
-    st.dataframe(df, use_container_width=True)
-
-    st.caption(
-        "⚠️ Fake reviews are detected using a weakly-supervised SVM model trained on "
-        "sentiment extremeness and linguistic patterns due to lack of labeled ground truth."
-    )
 else:
-    st.info("Awaiting Amazon product URL")
+    st.info("👋 System Standby. Awaiting URL Input.")
