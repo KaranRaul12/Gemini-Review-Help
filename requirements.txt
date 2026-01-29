@@ -6,3 +6,4 @@ nltk
 plotly
 google-genai
 matplotlib
+scikit-learn
