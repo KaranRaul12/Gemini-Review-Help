@@ -14,198 +14,227 @@ try:
 except LookupError:
     nltk.download('vader_lexicon')
 
-# --- UI CONFIG & LIGHT THEME ---
+# --- UI CONFIG & ADVANCED STYLING ---
 st.set_page_config(page_title="SENTIMENT ANALYSIS", layout="wide")
 
-# This CSS forces the app to stay light and removes all black containers
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Inter:wght@400;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Inter:wght@300;600&display=swap');
     
-    /* Force Light Background on Everything */
-    .stApp, [data-testid="stSidebar"], .main {
-        background-color: #ffffff !important;
-        color: #2D2D2D !important;
+    .stApp {
+        background: radial-gradient(circle at 50% 50%, #12141d 0%, #050505 100%);
+        color: #e0e0e0;
         font-family: 'Inter', sans-serif;
     }
-
-    /* Black-outlined Yellow Header */
+    
     .gradient-text {
+        background: linear-gradient(92deg, #FF9900 0%, #FF5F6D 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
         font-family: 'Orbitron', sans-serif;
-        font-size: 3rem;
-        color: #FFCC00;
+        font-size: 2.8rem;
+        letter-spacing: 3px;
         text-transform: uppercase;
-        letter-spacing: 2px;
-        margin-bottom: 30px;
-        text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+        margin-bottom: 20px;
     }
 
-    /* Clean Card System */
     .metric-card {
-        background: #ffffff;
-        border: 1px solid #EAEAEA;
-        border-radius: 12px;
-        padding: 20px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 20px;
+        padding: 24px;
         text-align: center;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-        color: #2D2D2D !important;
+        backdrop-filter: blur(10px);
+        transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        min-height: 120px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
     }
     
-    .metric-card h3, .metric-card h2, .metric-card p {
-        color: #2D2D2D !important;
-        margin: 5px 0;
-    }
-
-    /* DNA Scorecard */
-    .dna-container {
-        background: #ffffff;
-        border: 1px solid #EAEAEA;
-        border-radius: 12px;
-        padding: 20px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-        margin-bottom: 20px;
+    .metric-card:hover {
+        border-color: #FF9900;
+        box-shadow: 0 0 20px rgba(255, 153, 0, 0.2);
+        transform: translateY(-8px);
     }
 
     .dna-table {
         width: 100%;
         border-collapse: collapse;
-    }
-    .dna-table td {
-        padding: 12px;
-        border-bottom: 1px solid #F5F5F5;
-        color: #444 !important;
-    }
-    .dna-label { font-weight: 600; }
-    .dna-value { color: #d4a017; font-weight: bold; font-family: 'Orbitron'; text-align: right; }
-
-    /* Neural Analyst Chat Box */
-    .chat-box {
-        background: #F9F9FB;
-        border: 1px solid #EAEAEA;
-        border-left: 6px solid #FFCC00;
-        padding: 20px;
-        border-radius: 8px;
-        color: #2D2D2D !important;
         margin-top: 15px;
     }
+    .dna-table td {
+        padding: 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .dna-label { font-weight: 600; color: #e0e0e0; }
+    .dna-value { color: #FF9900; font-weight: bold; text-align: right; font-family: 'Orbitron'; }
 
-    /* Sidebar Fixes */
-    [data-testid="stSidebar"] .stMarkdown p { color: #2D2D2D !important; }
-    
-    /* Table Fixes */
-    .stDataFrame { background: white; border: 1px solid #EAEAEA; border-radius: 12px; }
-    
-    /* Heading Colors */
-    h1, h2, h3 { color: #2D2D2D !important; }
+    .chat-box {
+        background: linear-gradient(145deg, rgba(28,31,43,1) 0%, rgba(14,17,23,1) 100%);
+        border: 1px solid #333;
+        border-left: 4px solid #FF9900;
+        padding: 25px;
+        border-radius: 15px;
+        box-shadow: 10px 10px 30px rgba(0,0,0,0.5);
+    }
     </style>
     """, unsafe_allow_html=True)
 
 # --- BACKEND LOGIC ---
+
 def get_product_metadata(reviews, title):
     try:
         client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-        prompt = f"Extract: Company | Model | Category. Context: {title} {str(reviews)[:2000]}"
+        prompt = f"Extract only the following 3 fields from this Amazon product title/reviews: 1. Company, 2. Model Name, 3. Category. Return as: Company | Model | Category. Context: {title} {str(reviews)[:2000]}"
         response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
         parts = response.text.split('|')
         return [p.strip() for p in parts] if len(parts) == 3 else ["Unknown", "Unknown", "Unknown"]
-    except: return ["N/A", "N/A", "N/A"]
+    except:
+        return ["N/A", "N/A", "N/A"]
 
 def get_radar_data(reviews):
-    dimensions = {'Quality':['quality','build'],'Value':['price','worth'],'Usability':['easy','use'],'Durability':['last','sturdy'],'Service':['ship','customer']}
+    dimensions = {
+        'Quality': ['quality', 'build', 'premium', 'cheap', 'material'],
+        'Value': ['price', 'worth', 'expensive', 'money', 'value'],
+        'Usability': ['easy', 'use', 'setup', 'friendly'],
+        'Durability': ['last', 'broke', 'sturdy', 'strong'],
+        'Service': ['shipping', 'package', 'customer', 'delivery']
+    }
     sia = SentimentIntensityAnalyzer()
     scores = []
     for dim, keywords in dimensions.items():
-        rel = [r for r in reviews if any(k in r.lower() for k in keywords)]
-        s = round(((sum([sia.polarity_scores(r)['compound'] for r in rel])/len(rel)+1)/2)*10,1) if rel else 5.0
-        scores.append(s)
+        relevant_revs = [r for r in reviews if any(k in r.lower() for k in keywords)]
+        if not relevant_revs:
+            scores.append(5.0) # Baseline neutral
+        else:
+            avg_score = sum([sia.polarity_scores(r)['compound'] for r in relevant_revs]) / len(relevant_revs)
+            # Map -1 to 1 into 0 to 10 scale
+            scores.append(round(((avg_score + 1) / 2) * 10, 1))
     return list(dimensions.keys()), scores
+
+def get_ai_response(query, context):
+    try:
+        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+        response = client.models.generate_content(
+            model="gemini-2.0-flash", 
+            contents=f"Product Analyst. Context: {str(context)[:8000]}. Query: {query}"
+        )
+        return response.text
+    except Exception as e: return f"AI Error: {str(e)}"
 
 def scrape_amazon(url):
     try:
         api_key = st.secrets["SCRAPER_API_KEY"]
-        res = requests.get('http://api.scraperapi.com', params={'api_key': api_key, 'url': url}, timeout=60)
-        soup = BeautifulSoup(res.text, "html.parser")
-        revs = [el.get_text().strip() for el in soup.select('span[data-hook="review-body"]')]
+        payload = {'api_key': api_key, 'url': url}
+        response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
+        soup = BeautifulSoup(response.text, "html.parser")
+        reviews = [el.get_text().strip() for el in soup.select('span[data-hook="review-body"]')]
         title = soup.find("span", {"id": "productTitle"})
-        return revs, (title.get_text().strip() if title else "Product"), None
-    except Exception as e: return None, None, str(e)
+        title_text = title.get_text().strip() if title else "Product"
+        return reviews, title_text, None
+    except Exception as e:
+        return None, None, str(e)
 
-# --- APP START ---
+# --- SESSION ---
 if 'reviews_list' not in st.session_state: st.session_state.reviews_list = []
 if 'meta' not in st.session_state: st.session_state.meta = ["-", "-", "-"]
 
+# --- SIDEBAR ---
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg", width=120)
-    st.write("---")
-    url = st.text_input("🔗 Amazon URL:")
-    if st.button("RUN ANALYSIS", use_container_width=True):
-        if url:
-            with st.spinner("Analyzing..."):
-                revs, title, err = scrape_amazon(url)
-                if revs:
-                    st.session_state.reviews_list = revs
-                    st.session_state.meta = get_product_metadata(revs, title)
-                else: st.error(err)
+    st.image("https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg", width=150)
+    st.markdown("<br>", unsafe_allow_html=True)
+    target_url = st.text_input("🔗 Paste Amazon Review URL:")
+    
+    if st.button("🚀 UNLEASH AI", use_container_width=True):
+        if target_url:
+            with st.spinner("Processing Data..."):
+                reviews, title, error = scrape_amazon(target_url)
+                if reviews:
+                    st.session_state.reviews_list = reviews
+                    st.session_state.meta = get_product_metadata(reviews, title)
+                else: st.error(error)
 
+# --- DASHBOARD MAIN ---
 st.markdown('<h1 class="gradient-text">SENTIMENT ANALYSIS</h1>', unsafe_allow_html=True)
 
 if st.session_state.reviews_list:
     reviews = st.session_state.reviews_list
     sia = SentimentIntensityAnalyzer()
     df = pd.DataFrame([{"Review": r, "Score": sia.polarity_scores(r)['compound']} for r in reviews])
+    df['Sentiment'] = df['Score'].apply(lambda x: 'Positive' if x > 0.05 else ('Negative' if x < -0.05 else 'Neutral'))
     
-    # 4-Column Layout
+    avg_score = df['Score'].mean()
+    
+    if avg_score > 0.4:
+        rec_text, rec_color = "MUST BUY", "#00ff88"
+    elif avg_score > 0.05:
+        rec_text, rec_color = "GOOD BUY", "#FF9900"
+    else:
+        rec_text, rec_color = "THINK AGAIN", "#ff3333"
+
+    # --- PANES ---
     m1, m2, m3, m4 = st.columns(4)
-    meta = st.session_state.meta
-    m1.markdown(f'<div class="metric-card"><p>COMPANY</p><h3>{meta[0]}</h3></div>', unsafe_allow_html=True)
-    m2.markdown(f'<div class="metric-card"><p>MODEL</p><h3>{meta[1]}</h3></div>', unsafe_allow_html=True)
-    m3.markdown(f'<div class="metric-card"><p>CATEGORY</p><h3>{meta[2]}</h3></div>', unsafe_allow_html=True)
+    m1.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">COMPANY</p><h3 style="color:#FF9900">{st.session_state.meta[0]}</h3></div>', unsafe_allow_html=True)
+    m2.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">MODEL</p><h3 style="color:#FF9900">{st.session_state.meta[1]}</h3></div>', unsafe_allow_html=True)
+    m3.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">CATEGORY</p><h3 style="color:#FF9900">{st.session_state.meta[2]}</h3></div>', unsafe_allow_html=True)
+    m4.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">RECOMMENDATION</p><h2 style="color:{rec_color}; font-weight:bold;">{rec_text}</h2></div>', unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Charts Row
+    col_radar, col_dna_list = st.columns([1.5, 1])
     
-    avg = df['Score'].mean()
-    rec, color = ("MUST BUY", "#28a745") if avg > 0.4 else (("GOOD BUY", "#FF9900") if avg > 0.05 else ("THINK AGAIN", "#dc3545"))
-    m4.markdown(f'<div class="metric-card"><p>DECISION</p><h2 style="color:{color} !important;">{rec}</h2></div>', unsafe_allow_html=True)
-
-    st.write("<br>", unsafe_allow_html=True)
-
-    # Visualization Row
-    col_radar, col_breakdown = st.columns([1.5, 1])
     labels, values = get_radar_data(reviews)
 
     with col_radar:
-        st.markdown('<div class="dna-container">', unsafe_allow_html=True)
-        st.subheader("🧬 Product DNA")
-        fig = go.Figure(data=go.Scatterpolar(r=values, theta=labels, fill='toself', fillcolor='rgba(255, 204, 0, 0.2)', line=dict(color='#FFCC00')))
-        fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 10], gridcolor="#eee"), bgcolor='rgba(255,255,255,0)'),
-                          paper_bgcolor='rgba(255,255,255,0)', font_color="#2D2D2D", height=380, margin=dict(t=30, b=30))
-        st.plotly_chart(fig, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+        fig_radar = go.Figure(data=go.Scatterpolar(
+            r=values, theta=labels, fill='toself',
+            marker=dict(color='#FF9900'), line=dict(color='#FF9900')
+        ))
+        fig_radar.update_layout(
+            polar=dict(radialaxis=dict(visible=False, range=[0, 10]), bgcolor='rgba(0,0,0,0)'),
+            paper_bgcolor='rgba(0,0,0,0)', font_color="white", title="Product DNA Visualization"
+        )
+        st.plotly_chart(fig_radar, use_container_width=True)
 
-    with col_breakdown:
-        st.markdown('<div class="dna-container">', unsafe_allow_html=True)
-        st.subheader("📊 Breakdown")
+    with col_dna_list:
+        st.markdown('<p style="font-family:Orbitron; color:#FF9900; margin-top:20px;">🧬 DNA SCORECARD</p>', unsafe_allow_html=True)
         dna_html = '<table class="dna-table">'
-        for l, v in zip(labels, values):
-            dna_html += f'<tr><td class="dna-label">{l}</td><td class="dna-value">{v}/10</td></tr>'
+        for label, val in zip(labels, values):
+            dna_html += f'<tr><td class="dna-label">{label}</td><td class="dna-value">{val}/10</td></tr>'
         dna_html += '</table>'
         st.markdown(dna_html, unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Pie Chart
-        fig_pie = px.pie(df, names=df['Score'].apply(lambda x: 'Positive' if x > 0.05 else ('Negative' if x < -0.05 else 'Neutral')), 
-                         hole=0.6, color_discrete_map={'Positive':'#28a745','Negative':'#dc3545','Neutral':'#EAEAEA'})
-        fig_pie.update_layout(height=200, showlegend=False, margin=dict(t=0, b=0, l=0, r=0), paper_bgcolor='rgba(0,0,0,0)')
-        st.plotly_chart(fig_pie, use_container_width=True)
 
-    # Neural Analyst Section
-    st.markdown('<div class="dna-container">', unsafe_allow_html=True)
-    st.subheader("💬 Neural Analyst")
-    user_q = st.text_input("Ask a question about these reviews:")
-    if user_q:
-        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-        ans = client.models.generate_content(model="gemini-2.0-flash", contents=f"Data: {str(reviews)[:5000]}. Q: {user_q}")
-        st.markdown(f'<div class="chat-box">{ans.text}</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    # Visual Sentiment Share
+    st.markdown("<br>", unsafe_allow_html=True)
+    fig_pie = px.pie(df, names='Sentiment', hole=0.7, 
+                     color='Sentiment', color_discrete_map={'Positive':'#00ff88','Negative':'#ff3333','Neutral':'#444'})
+    fig_pie.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color="white", showlegend=True, height=300, title="Sentiment Distribution")
+    st.plotly_chart(fig_pie, use_container_width=True)
 
-    st.dataframe(df, use_container_width=True)
+    # Neural Analyst
+    st.markdown('<h3 style="color:#FF9900; font-family:Orbitron;">💬 NEURAL ANALYST</h3>', unsafe_allow_html=True)
+    
+    c1, c2 = st.columns(2)
+    if c1.button("✅ Quick Pros"):
+        st.session_state.chat_answer = get_ai_response("Top 3 pros?", reviews)
+    if c2.button("❌ Quick Cons"):
+        st.session_state.chat_answer = get_ai_response("Top 3 cons?", reviews)
+
+    user_query = st.text_input("Interrogate the data:")
+    if user_query:
+        with st.spinner("Processing..."):
+            st.session_state.chat_answer = get_ai_response(user_query, reviews)
+            
+    if st.session_state.get('chat_answer'):
+        st.markdown(f'<div class="chat-box">{st.session_state.chat_answer}</div>', unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    try:
+        st.dataframe(df.style.background_gradient(cmap='RdYlGn', subset=['Score']), use_container_width=True)
+    except:
+        st.dataframe(df, use_container_width=True)
+
 else:
-    st.info("👋 System Ready. Please provide an Amazon Review URL in the sidebar.")
+    st.info("👋 System Standby. Awaiting URL Input.")
