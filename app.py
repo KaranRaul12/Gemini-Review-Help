@@ -69,6 +69,7 @@ st.markdown("""
         border-left: 4px solid #FF9900;
         padding: 25px;
         border-radius: 15px;
+        margin-top: 15px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -77,11 +78,8 @@ st.markdown("""
 def get_product_metadata(reviews, title):
     try:
         client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-        context_text = f"Title: {title} | Snippet: {str(reviews)[:1000]}"
-        prompt = (
-            "Identify: 1. Company, 2. Model, 3. Category. "
-            "Return ONLY as: Company | Model | Category."
-        )
+        context_text = f"Title: {title} | Snippet: {str(reviews)[:1500]}"
+        prompt = "Identify: 1. Company, 2. Model, 3. Category. Return ONLY as: Company | Model | Category."
         response = client.models.generate_content(model="gemini-2.0-flash", contents=[prompt, context_text])
         parts = response.text.split('|')
         return [p.strip() for p in parts] if len(parts) == 3 else ["Unknown", "Unknown", "Unknown"]
@@ -123,10 +121,11 @@ def scrape_amazon(url):
         return revs, title_text, None
     except Exception as e: return None, None, str(e)
 
-# --- APP FLOW ---
+# --- SESSION ---
 if 'reviews_list' not in st.session_state: st.session_state.reviews_list = []
 if 'meta' not in st.session_state: st.session_state.meta = ["-", "-", "-"]
 
+# --- SIDEBAR ---
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg", width=120)
     url = st.text_input("🔗 Paste Amazon Review URL:")
@@ -143,14 +142,18 @@ st.markdown('<h1 class="gradient-text">SENTIMENT ANALYSIS</h1>', unsafe_allow_ht
 
 if st.session_state.reviews_list:
     reviews = st.session_state.reviews_list
-    labels, values = get_stats_data(reviews)
+    sia = SentimentIntensityAnalyzer()
     
-    # Metadata Row
-    m1, m2, m3, m4 = st.columns(4)
-    meta = st.session_state.meta
-    avg_score = pd.DataFrame([SentimentIntensityAnalyzer().polarity_scores(r)['compound'] for r in reviews])[0].mean()
+    # 1. Process DataFrame for Pie Chart & Table
+    df = pd.DataFrame([{"Review": r, "Score": sia.polarity_scores(r)['compound']} for r in reviews])
+    df['Sentiment'] = df['Score'].apply(lambda x: 'Positive' if x > 0.05 else ('Negative' if x < -0.05 else 'Neutral'))
+    
+    # 2. Metadata & Recommendations
+    avg_score = df['Score'].mean()
     rec, rec_clr = ("MUST BUY", "#00ff88") if avg_score > 0.4 else (("GOOD BUY", "#FF9900") if avg_score > 0.05 else ("THINK AGAIN", "#ff3333"))
+    meta = st.session_state.meta
 
+    m1, m2, m3, m4 = st.columns(4)
     m1.markdown(f'<div class="metric-card"><p style="font-size:0.7rem;">COMPANY</p><h3 style="color:#FF9900">{meta[0]}</h3></div>', unsafe_allow_html=True)
     m2.markdown(f'<div class="metric-card"><p style="font-size:0.7rem;">MODEL</p><h3 style="color:#FF9900">{meta[1]}</h3></div>', unsafe_allow_html=True)
     m3.markdown(f'<div class="metric-card"><p style="font-size:0.7rem;">CATEGORY</p><h3 style="color:#FF9900">{meta[2]}</h3></div>', unsafe_allow_html=True)
@@ -158,13 +161,12 @@ if st.session_state.reviews_list:
 
     st.write("<br>", unsafe_allow_html=True)
 
-    # --- UPDATED: DYNAMIC BAR COLORS ---
+    # 3. Product Statistics Row (Bars + Table)
     c_left, c_right = st.columns([1.5, 1])
+    labels, values = get_stats_data(reviews)
 
     with c_left:
-        # Dynamic color logic: Green if >= 5, Yellow if < 5
         bar_colors = ['#00ff88' if v >= 5 else '#FFCC00' for v in values]
-        
         fig_bars = go.Figure(go.Bar(
             x=values, y=labels, orientation='h',
             marker=dict(color=bar_colors),
@@ -186,7 +188,14 @@ if st.session_state.reviews_list:
         stats_html += '</table>'
         st.markdown(stats_html, unsafe_allow_html=True)
 
-    # Neural Analyst
+    # 4. RE-ADDED: Sentiment Share Pie Chart
+    st.markdown("<br>", unsafe_allow_html=True)
+    fig_pie = px.pie(df, names='Sentiment', hole=0.7, 
+                     color='Sentiment', color_discrete_map={'Positive':'#00ff88','Negative':'#ff3333','Neutral':'#444'})
+    fig_pie.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color="white", showlegend=True, height=350, title="Global Sentiment Share")
+    st.plotly_chart(fig_pie, use_container_width=True)
+
+    # 5. Neural Analyst
     st.markdown('<h3 style="color:#FF9900; font-family:Orbitron; margin-top:30px;">💬 NEURAL ANALYST</h3>', unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     if c1.button("✅ Quick Pros"): st.session_state.chat_ans = get_ai_response("Top 3 pros?", reviews)
@@ -195,6 +204,10 @@ if st.session_state.reviews_list:
     user_q = st.text_input("Ask the AI about these reviews:")
     if user_q: st.session_state.chat_ans = get_ai_response(user_q, reviews)
     if st.session_state.get('chat_ans'): st.markdown(f'<div class="chat-box">{st.session_state.chat_ans}</div>', unsafe_allow_html=True)
+
+    # 6. RE-ADDED: Full Review List (Dataframe)
+    st.markdown('<h3 style="color:#FF9900; font-family:Orbitron; margin-top:40px;">📂 RAW REVIEW DATA</h3>', unsafe_allow_html=True)
+    st.dataframe(df.style.background_gradient(cmap='RdYlGn', subset=['Score']), use_container_width=True)
 
 else:
     st.info("👋 System Standby. Awaiting URL Input.")
