@@ -14,7 +14,7 @@ try:
 except LookupError:
     nltk.download('vader_lexicon')
 
-# --- UI CONFIG & ADVANCED STYLING ---
+# --- UI CONFIG & ADVANCED STYLING (KEEPING YOUR FRAMEWORK) ---
 st.set_page_config(page_title="SENTIMENT ANALYSIS", layout="wide")
 
 st.markdown("""
@@ -81,7 +81,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- BACKEND LOGIC ---
+# --- UPGRADED BACKEND LOGIC ---
 
 def get_product_metadata(reviews, title):
     try:
@@ -106,10 +106,9 @@ def get_radar_data(reviews):
     for dim, keywords in dimensions.items():
         relevant_revs = [r for r in reviews if any(k in r.lower() for k in keywords)]
         if not relevant_revs:
-            scores.append(5.0) # Baseline neutral
+            scores.append(5.0)
         else:
             avg_score = sum([sia.polarity_scores(r)['compound'] for r in relevant_revs]) / len(relevant_revs)
-            # Map -1 to 1 into 0 to 10 scale
             scores.append(round(((avg_score + 1) / 2) * 10, 1))
     return list(dimensions.keys()), scores
 
@@ -126,12 +125,32 @@ def get_ai_response(query, context):
 def scrape_amazon(url):
     try:
         api_key = st.secrets["SCRAPER_API_KEY"]
-        payload = {'api_key': api_key, 'url': url}
+        # render='true' is now essential to bypass Amazon's blank-page defense
+        payload = {'api_key': api_key, 'url': url, 'render': 'true'}
         response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
+        
+        if response.status_code != 200:
+            return None, None, f"Scraper Error {response.status_code}: Check API credits."
+
         soup = BeautifulSoup(response.text, "html.parser")
+        
+        # Enhanced Title Search
+        title_el = soup.find("span", {"id": "productTitle"}) or soup.find("h1", {"id": "title"})
+        title_text = title_el.get_text().strip() if title_el else "Product Not Found"
+        
+        # Multi-Selector Review Search (Amazon 2026 Fallbacks)
         reviews = [el.get_text().strip() for el in soup.select('span[data-hook="review-body"]')]
-        title = soup.find("span", {"id": "productTitle"})
-        title_text = title.get_text().strip() if title else "Product"
+        if not reviews:
+            reviews = [el.get_text().strip() for el in soup.select('.review-text-content span')]
+        if not reviews:
+            reviews = [el.get_text().strip() for el in soup.select('.a-expander-content.reviewText')]
+
+        if not reviews:
+            # Check for bot block
+            if "captcha" in response.text.lower():
+                return None, None, "Amazon blocked this with a CAPTCHA. Retrying with a different IP might help."
+            return None, None, "Zero reviews found. Amazon may be forcing a login for this URL."
+
         return reviews, title_text, None
     except Exception as e:
         return None, None, str(e)
@@ -153,7 +172,8 @@ with st.sidebar:
                 if reviews:
                     st.session_state.reviews_list = reviews
                     st.session_state.meta = get_product_metadata(reviews, title)
-                else: st.error(error)
+                else: 
+                    st.error(f"Failed to fetch data: {error}")
 
 # --- DASHBOARD MAIN ---
 st.markdown('<h1 class="gradient-text">SENTIMENT ANALYSIS</h1>', unsafe_allow_html=True)
@@ -184,7 +204,6 @@ if st.session_state.reviews_list:
 
     # Charts Row
     col_radar, col_dna_list = st.columns([1.5, 1])
-    
     labels, values = get_radar_data(reviews)
 
     with col_radar:
