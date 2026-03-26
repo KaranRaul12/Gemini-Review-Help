@@ -14,7 +14,7 @@ try:
 except LookupError:
     nltk.download('vader_lexicon')
 
-# --- UI CONFIG & STYLING (DARK FRAMEWORK) ---
+# --- UI CONFIG & STYLING ---
 st.set_page_config(page_title="SENTIMENT ANALYSIS", layout="wide")
 
 st.markdown("""
@@ -73,31 +73,19 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- IMPROVED METADATA LOGIC ---
+# --- BACKEND LOGIC ---
 def get_product_metadata(reviews, title):
     try:
         client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-        # We give the AI the Title and a small snippet of reviews for context
-        context_text = f"Title: {title} | Review Snippet: {str(reviews)[:1000]}"
-        
+        context_text = f"Title: {title} | Snippet: {str(reviews)[:1000]}"
         prompt = (
-            "You are a product expert. Based ONLY on the context provided, identify the: "
-            "1. Manufacturing Company, 2. Product Model Name, 3. Product Category. "
-            "Format your response EXACTLY like this: Company | Model | Category. "
-            "If you cannot find one, use 'Unknown'. Do not write anything else."
+            "Identify: 1. Company, 2. Model, 3. Category. "
+            "Return ONLY as: Company | Model | Category."
         )
-        
-        response = client.models.generate_content(
-            model="gemini-2.0-flash", 
-            contents=[prompt, context_text]
-        )
-        
+        response = client.models.generate_content(model="gemini-2.0-flash", contents=[prompt, context_text])
         parts = response.text.split('|')
-        if len(parts) == 3:
-            return [p.strip() for p in parts]
-        return ["Unknown", "Unknown", "Unknown"]
-    except Exception as e:
-        return ["Error", "Error", "Error"]
+        return [p.strip() for p in parts] if len(parts) == 3 else ["Unknown", "Unknown", "Unknown"]
+    except: return ["Unknown", "Unknown", "Unknown"]
 
 def get_stats_data(reviews):
     dimensions = {
@@ -127,65 +115,59 @@ def scrape_amazon(url):
         api_key = st.secrets["SCRAPER_API_KEY"]
         payload = {'api_key': api_key, 'url': url, 'render': 'true'}
         res = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
-        if res.status_code != 200: return None, None, f"Error {res.status_code}"
         soup = BeautifulSoup(res.text, "html.parser")
-        
-        # Priority on finding the title for metadata
         title = soup.find("span", {"id": "productTitle"}) or soup.find("h1", {"id": "title"})
         title_text = title.get_text().strip() if title else "Unknown Product"
-        
         revs = [el.get_text().strip() for el in soup.select('span[data-hook="review-body"]')]
         if not revs: revs = [el.get_text().strip() for el in soup.select('.review-text-content span')]
-        
         return revs, title_text, None
     except Exception as e: return None, None, str(e)
 
-# --- SESSION ---
+# --- APP FLOW ---
 if 'reviews_list' not in st.session_state: st.session_state.reviews_list = []
 if 'meta' not in st.session_state: st.session_state.meta = ["-", "-", "-"]
 
-# --- SIDEBAR ---
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg", width=150)
+    st.image("https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg", width=120)
     url = st.text_input("🔗 Paste Amazon Review URL:")
     if st.button("🚀 UNLEASH AI", use_container_width=True):
         if url:
-            with st.spinner("Analyzing Product Data..."):
+            with st.spinner("Decoding Product..."):
                 revs, title, err = scrape_amazon(url)
                 if revs:
                     st.session_state.reviews_list = revs
-                    # We pass the scraped title here so Gemini has a better chance
                     st.session_state.meta = get_product_metadata(revs, title)
                 else: st.error(err)
 
-# --- DASHBOARD MAIN ---
 st.markdown('<h1 class="gradient-text">SENTIMENT ANALYSIS</h1>', unsafe_allow_html=True)
 
 if st.session_state.reviews_list:
     reviews = st.session_state.reviews_list
-    sia = SentimentIntensityAnalyzer()
-    df = pd.DataFrame([{"Review": r, "Score": sia.polarity_scores(r)['compound']} for r in reviews])
-    df['Sentiment'] = df['Score'].apply(lambda x: 'Positive' if x > 0.05 else ('Negative' if x < -0.05 else 'Neutral'))
-    
-    avg_score = df['Score'].mean()
-    rec, clr = ("MUST BUY", "#00ff88") if avg_score > 0.4 else (("GOOD BUY", "#FF9900") if avg_score > 0.05 else ("THINK AGAIN", "#ff3333"))
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">COMPANY</p><h3 style="color:#FF9900">{st.session_state.meta[0]}</h3></div>', unsafe_allow_html=True)
-    m2.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">MODEL</p><h3 style="color:#FF9900">{st.session_state.meta[1]}</h3></div>', unsafe_allow_html=True)
-    m3.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">CATEGORY</p><h3 style="color:#FF9900">{st.session_state.meta[2]}</h3></div>', unsafe_allow_html=True)
-    m4.markdown(f'<div class="metric-card"><p style="font-size:0.8rem; opacity:0.7;">RECOMMENDATION</p><h2 style="color:{clr}; font-weight:bold;">{rec}</h2></div>', unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # --- UPDATED: PRODUCT STATISTICS ---
-    c_left, c_right = st.columns([1.5, 1])
     labels, values = get_stats_data(reviews)
+    
+    # Metadata Row
+    m1, m2, m3, m4 = st.columns(4)
+    meta = st.session_state.meta
+    avg_score = pd.DataFrame([SentimentIntensityAnalyzer().polarity_scores(r)['compound'] for r in reviews])[0].mean()
+    rec, rec_clr = ("MUST BUY", "#00ff88") if avg_score > 0.4 else (("GOOD BUY", "#FF9900") if avg_score > 0.05 else ("THINK AGAIN", "#ff3333"))
+
+    m1.markdown(f'<div class="metric-card"><p style="font-size:0.7rem;">COMPANY</p><h3 style="color:#FF9900">{meta[0]}</h3></div>', unsafe_allow_html=True)
+    m2.markdown(f'<div class="metric-card"><p style="font-size:0.7rem;">MODEL</p><h3 style="color:#FF9900">{meta[1]}</h3></div>', unsafe_allow_html=True)
+    m3.markdown(f'<div class="metric-card"><p style="font-size:0.7rem;">CATEGORY</p><h3 style="color:#FF9900">{meta[2]}</h3></div>', unsafe_allow_html=True)
+    m4.markdown(f'<div class="metric-card"><p style="font-size:0.7rem;">RECOMMENDATION</p><h2 style="color:{rec_clr};">{rec}</h2></div>', unsafe_allow_html=True)
+
+    st.write("<br>", unsafe_allow_html=True)
+
+    # --- UPDATED: DYNAMIC BAR COLORS ---
+    c_left, c_right = st.columns([1.5, 1])
 
     with c_left:
+        # Dynamic color logic: Green if >= 5, Yellow if < 5
+        bar_colors = ['#00ff88' if v >= 5 else '#FFCC00' for v in values]
+        
         fig_bars = go.Figure(go.Bar(
             x=values, y=labels, orientation='h',
-            marker=dict(color='#FF9900'),
+            marker=dict(color=bar_colors),
             text=[f"{v}/10" for v in values], textposition='auto',
         ))
         fig_bars.update_layout(
@@ -207,13 +189,12 @@ if st.session_state.reviews_list:
     # Neural Analyst
     st.markdown('<h3 style="color:#FF9900; font-family:Orbitron; margin-top:30px;">💬 NEURAL ANALYST</h3>', unsafe_allow_html=True)
     c1, c2 = st.columns(2)
-    if c1.button("✅ Quick Pros"): st.session_state.chat_answer = get_ai_response("Top 3 pros?", reviews)
-    if c2.button("❌ Quick Cons"): st.session_state.chat_answer = get_ai_response("Top 3 cons?", reviews)
-    user_q = st.text_input("Ask a question about these reviews:")
-    if user_q: st.session_state.chat_answer = get_ai_response(user_q, reviews)
-    if st.session_state.get('chat_answer'): st.markdown(f'<div class="chat-box">{st.session_state.chat_answer}</div>', unsafe_allow_html=True)
+    if c1.button("✅ Quick Pros"): st.session_state.chat_ans = get_ai_response("Top 3 pros?", reviews)
+    if c2.button("❌ Quick Cons"): st.session_state.chat_ans = get_ai_response("Top 3 cons?", reviews)
+    
+    user_q = st.text_input("Ask the AI about these reviews:")
+    if user_q: st.session_state.chat_ans = get_ai_response(user_q, reviews)
+    if st.session_state.get('chat_ans'): st.markdown(f'<div class="chat-box">{st.session_state.chat_ans}</div>', unsafe_allow_html=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.dataframe(df, use_container_width=True)
 else:
     st.info("👋 System Standby. Awaiting URL Input.")
