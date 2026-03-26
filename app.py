@@ -12,10 +12,9 @@ import nltk
 try:
     nltk.data.find('sentiment/vader_lexicon.zip')
 except LookupError:
-    nltk.download('nltk_data/sentiment/vader_lexicon.zip')
     nltk.download('vader_lexicon')
 
-# --- UI CONFIG & ADVANCED STYLING ---
+# --- UI CONFIG & STYLING (DARK FRAMEWORK) ---
 st.set_page_config(page_title="SENTIMENT ANALYSIS", layout="wide")
 
 st.markdown("""
@@ -52,17 +51,17 @@ st.markdown("""
         justify-content: center;
     }
 
-    .dna-table {
+    .stats-table {
         width: 100%;
         border-collapse: collapse;
         margin-top: 15px;
     }
-    .dna-table td {
+    .stats-table td {
         padding: 12px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     }
-    .dna-label { font-weight: 600; color: #e0e0e0; }
-    .dna-value { color: #FF9900; font-weight: bold; text-align: right; font-family: 'Orbitron'; }
+    .stats-label { font-weight: 600; color: #e0e0e0; }
+    .stats-value { color: #FF9900; font-weight: bold; text-align: right; font-family: 'Orbitron'; }
 
     .chat-box {
         background: linear-gradient(145deg, rgba(28,31,43,1) 0%, rgba(14,17,23,1) 100%);
@@ -74,15 +73,31 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- BACKEND LOGIC ---
+# --- IMPROVED METADATA LOGIC ---
 def get_product_metadata(reviews, title):
     try:
         client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-        prompt = f"Extract only: Company | Model | Category. Context: {title} {str(reviews)[:2000]}"
-        response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+        # We give the AI the Title and a small snippet of reviews for context
+        context_text = f"Title: {title} | Review Snippet: {str(reviews)[:1000]}"
+        
+        prompt = (
+            "You are a product expert. Based ONLY on the context provided, identify the: "
+            "1. Manufacturing Company, 2. Product Model Name, 3. Product Category. "
+            "Format your response EXACTLY like this: Company | Model | Category. "
+            "If you cannot find one, use 'Unknown'. Do not write anything else."
+        )
+        
+        response = client.models.generate_content(
+            model="gemini-2.0-flash", 
+            contents=[prompt, context_text]
+        )
+        
         parts = response.text.split('|')
-        return [p.strip() for p in parts] if len(parts) == 3 else ["Unknown", "Unknown", "Unknown"]
-    except: return ["N/A", "N/A", "N/A"]
+        if len(parts) == 3:
+            return [p.strip() for p in parts]
+        return ["Unknown", "Unknown", "Unknown"]
+    except Exception as e:
+        return ["Error", "Error", "Error"]
 
 def get_stats_data(reviews):
     dimensions = {
@@ -114,25 +129,32 @@ def scrape_amazon(url):
         res = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
         if res.status_code != 200: return None, None, f"Error {res.status_code}"
         soup = BeautifulSoup(res.text, "html.parser")
+        
+        # Priority on finding the title for metadata
         title = soup.find("span", {"id": "productTitle"}) or soup.find("h1", {"id": "title"})
+        title_text = title.get_text().strip() if title else "Unknown Product"
+        
         revs = [el.get_text().strip() for el in soup.select('span[data-hook="review-body"]')]
         if not revs: revs = [el.get_text().strip() for el in soup.select('.review-text-content span')]
-        return revs, (title.get_text().strip() if title else "Product"), None
+        
+        return revs, title_text, None
     except Exception as e: return None, None, str(e)
 
-# --- SESSION & SIDEBAR ---
+# --- SESSION ---
 if 'reviews_list' not in st.session_state: st.session_state.reviews_list = []
 if 'meta' not in st.session_state: st.session_state.meta = ["-", "-", "-"]
 
+# --- SIDEBAR ---
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg", width=150)
     url = st.text_input("🔗 Paste Amazon Review URL:")
     if st.button("🚀 UNLEASH AI", use_container_width=True):
         if url:
-            with st.spinner("Processing..."):
+            with st.spinner("Analyzing Product Data..."):
                 revs, title, err = scrape_amazon(url)
                 if revs:
                     st.session_state.reviews_list = revs
+                    # We pass the scraped title here so Gemini has a better chance
                     st.session_state.meta = get_product_metadata(revs, title)
                 else: st.error(err)
 
@@ -156,52 +178,38 @@ if st.session_state.reviews_list:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- UPDATED: PRODUCT STATISTICS SECTION ---
-    col_bars, col_table = st.columns([1.5, 1])
+    # --- UPDATED: PRODUCT STATISTICS ---
+    c_left, c_right = st.columns([1.5, 1])
     labels, values = get_stats_data(reviews)
 
-    with col_bars:
-        # Create a horizontal bar chart
+    with c_left:
         fig_bars = go.Figure(go.Bar(
-            x=values,
-            y=labels,
-            orientation='h',
-            marker=dict(color='#FF9900', line=dict(color='#FF9900', width=1)),
-            text=[f"{v}/10" for v in values],
-            textposition='auto',
+            x=values, y=labels, orientation='h',
+            marker=dict(color='#FF9900'),
+            text=[f"{v}/10" for v in values], textposition='auto',
         ))
         fig_bars.update_layout(
             title=dict(text="Product Statistics Graph", font=dict(family="Orbitron", color="#FF9900")),
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            font_color="white",
-            xaxis=dict(range=[0, 10], showgrid=False, zeroline=False),
-            yaxis=dict(autorange="reversed"), # High quality at top
-            height=350,
-            margin=dict(t=50, b=20, l=0, r=20)
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color="white",
+            xaxis=dict(range=[0, 10], showgrid=False), yaxis=dict(autorange="reversed"),
+            height=350, margin=dict(t=50, b=20, l=0, r=20)
         )
         st.plotly_chart(fig_bars, use_container_width=True)
 
-    with col_table:
+    with c_right:
         st.markdown('<p style="font-family:Orbitron; color:#FF9900; margin-top:10px;">📊 Product Statistics</p>', unsafe_allow_html=True)
-        dna_html = '<table class="dna-table">'
+        stats_html = '<table class="stats-table">'
         for l, v in zip(labels, values):
-            dna_html += f'<tr><td class="dna-label">{l}</td><td class="dna-value">{v}/10</td></tr>'
-        dna_html += '</table>'
-        st.markdown(dna_html, unsafe_allow_html=True)
-
-    # Visual Sentiment Share
-    st.markdown("<br>", unsafe_allow_html=True)
-    fig_pie = px.pie(df, names='Sentiment', hole=0.7, color='Sentiment', color_discrete_map={'Positive':'#00ff88','Negative':'#ff3333','Neutral':'#444'})
-    fig_pie.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color="white", showlegend=True, height=250, title="Sentiment Share")
-    st.plotly_chart(fig_pie, use_container_width=True)
+            stats_html += f'<tr><td class="stats-label">{l}</td><td class="stats-value">{v}/10</td></tr>'
+        stats_html += '</table>'
+        st.markdown(stats_html, unsafe_allow_html=True)
 
     # Neural Analyst
-    st.markdown('<h3 style="color:#FF9900; font-family:Orbitron;">💬 NEURAL ANALYST</h3>', unsafe_allow_html=True)
+    st.markdown('<h3 style="color:#FF9900; font-family:Orbitron; margin-top:30px;">💬 NEURAL ANALYST</h3>', unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     if c1.button("✅ Quick Pros"): st.session_state.chat_answer = get_ai_response("Top 3 pros?", reviews)
     if c2.button("❌ Quick Cons"): st.session_state.chat_answer = get_ai_response("Top 3 cons?", reviews)
-    user_q = st.text_input("Ask a question:")
+    user_q = st.text_input("Ask a question about these reviews:")
     if user_q: st.session_state.chat_answer = get_ai_response(user_q, reviews)
     if st.session_state.get('chat_answer'): st.markdown(f'<div class="chat-box">{st.session_state.chat_answer}</div>', unsafe_allow_html=True)
 
